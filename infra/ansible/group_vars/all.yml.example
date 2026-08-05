@@ -1,0 +1,36 @@
+---
+# Copie para all.yml (gitignored - contem/gera dados especificos do cliente)
+# ou sobrescreva por cliente em host_vars/<client_name>.yml.
+
+# Onde o repo fica sincronizado na VPS - mesmo default do Jenkinsfile.template.
+deploy_root: /opt/vps-deploy
+
+# Origem do codigo sincronizado para a VPS. Aponte para o repo Git real do
+# boilerplate/cliente (a role stack_deploy faz "git clone/pull" desta URL).
+repo_git_url: "https://github.com/<org>/vps-deploy-customizado.git"
+repo_git_version: main
+
+# Preenche .env.example (raiz do repo) -> .env na VPS (mesmas chaves do arquivo).
+domain_name: cliente-demo.com
+traefik_acme_email: admin@cliente-demo.com
+# Aceita 1+ CIDRs separados por virgula - usado tanto no middleware do
+# Traefik (.env) quanto na regra de SSH do firewall gerenciado da
+# Hostinger (role hostinger_firewall). Ver docs/infrastructure/security-passwords.md
+admin_allowed_cidrs: "203.0.113.1/32"
+
+# Backup remoto (opcional) - se definido, a role "backup" configura rclone
+# para copiar setup/backups/volumes/ para este destino apos cada dump local.
+# Deixe em branco para manter backups so localmente (nao recomendado em prod).
+backup_remote_rclone_target: ""   # ex: "hetzner-storagebox:acme-backups"
+
+# ==========================================
+# STACKS OPCIONAIS (apps-stack.yml / evocrm-stack.yml / evogo-stack.yml)
+# Defaults ficam em roles/secrets/defaults/main.yml (tudo "0" = desligado).
+# Descomente/ajuste so no host_vars/<client_name>.yml do cliente que precisa.
+# ==========================================
+# deploy_apps_stack: "1"
+# deploy_evocrm_stack: "1"
+# deploy_evogo_stack: "1"
+# crm_web_domain: "crm.{{ domain_name }}"
+# crm_api_domain: "crmapi.{{ domain_name }}"
+# evogo_domain: "evogo.{{ domain_name }}"

@@ -1,0 +1,27 @@
+.env
+setup/env/apps/*.env
+!setup/env/apps/*.env.example
+
+backups
+
+node_modules
+
+# Terraform - cada pasta de cliente sob infra/terraform/clients/<nome>/
+# tem seu proprio state/config real; so os *.example ficam versionados.
+**/.terraform/
+*.tfstate
+*.tfstate.*
+crash.log
+crash.*.log
+infra/terraform/clients/*/terraform.tfvars
+infra/terraform/clients/*/backend.tf
+!infra/terraform/clients/_template/**
+
+# Ansible
+*.retry
+infra/ansible/inventory/hosts.yml
+infra/ansible/group_vars/all.yml
+infra/ansible/host_vars/
+infra/ansible/collections/
+__pycache__/
+

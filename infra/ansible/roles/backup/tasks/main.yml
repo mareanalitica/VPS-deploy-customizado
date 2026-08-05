@@ -1,0 +1,42 @@
+---
+- name: Instalar cron (necessario pelo modulo ansible.builtin.cron - nao vem por padrao em imagens minimas)
+  ansible.builtin.apt:
+    name: cron
+    state: present
+    update_cache: true
+
+- name: Garantir servico cron habilitado e ativo
+  ansible.builtin.systemd:
+    name: cron
+    enabled: true
+    state: started
+
+- name: Instalar rclone (destino remoto de backup configurado)
+  ansible.builtin.apt:
+    name: rclone
+    state: present
+    update_cache: true
+  when: backup_remote_rclone_target | length > 0
+
+- name: Instalar wrapper de backup + upload remoto
+  ansible.builtin.template:
+    src: backup-and-push.sh.j2
+    dest: "{{ deploy_root }}/setup/scripts/backup-and-push.sh"
+    mode: "0750"
+  when: backup_remote_rclone_target | length > 0
+
+- name: Agendar backup diario (somente local)
+  ansible.builtin.cron:
+    name: "vps-deploy: backup diario de volumes"
+    job: "cd {{ deploy_root }} && bash setup/scripts/backup-volumes.sh >> /var/log/vps-deploy-backup.log 2>&1"
+    minute: "{{ backup_cron_minute }}"
+    hour: "{{ backup_cron_hour }}"
+  when: backup_remote_rclone_target | length == 0
+
+- name: Agendar backup diario + upload remoto (rclone)
+  ansible.builtin.cron:
+    name: "vps-deploy: backup diario de volumes + upload remoto"
+    job: "cd {{ deploy_root }} && bash setup/scripts/backup-and-push.sh >> /var/log/vps-deploy-backup.log 2>&1"
+    minute: "{{ backup_cron_minute }}"
+    hour: "{{ backup_cron_hour }}"
+  when: backup_remote_rclone_target | length > 0

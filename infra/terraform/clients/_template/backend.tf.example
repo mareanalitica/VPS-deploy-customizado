@@ -1,0 +1,39 @@
+# Copie este arquivo para "backend.tf" (sem .example) dentro da pasta do
+# cliente e preencha. Escolha UMA das opcoes abaixo - nao ambas.
+#
+# "backend.tf" nao deve ser commitado com valores reais preenchidos se
+# contiver credenciais; os exemplos abaixo usam variaveis de ambiente para
+# as credenciais em si (AWS_ACCESS_KEY_ID etc / TF_TOKEN_*), entao o
+# arquivo pode ficar versionado com seguranca.
+
+# ------------------------------------------------------------------------
+# Opcao A - Backend S3-compativel (AWS S3, Hetzner Object Storage,
+# Cloudflare R2, ou o proprio MinIO de uma VPS "hub"). Credenciais via
+# env vars AWS_ACCESS_KEY_ID / AWS_SECRET_ACCESS_KEY (ou AWS_PROFILE).
+# ------------------------------------------------------------------------
+# terraform {
+#   backend "s3" {
+#     bucket                      = "vps-deploy-tfstate"
+#     key                         = "clients/acme/terraform.tfstate"
+#     region                      = "auto"
+#     endpoint                    = "https://<account-id>.r2.cloudflarestorage.com"
+#     skip_credentials_validation = true
+#     skip_region_validation      = true
+#     skip_requesting_account_id  = true
+#     use_path_style              = true
+#   }
+# }
+
+# ------------------------------------------------------------------------
+# Opcao B - Terraform Cloud (free tier cobre times pequenos, tem locking
+# e historico de state prontos). Login via `terraform login` ou
+# TF_TOKEN_app_terraform_io env var - nunca no arquivo.
+# ------------------------------------------------------------------------
+# terraform {
+#   cloud {
+#     organization = "sua-org"
+#     workspaces {
+#       name = "vps-deploy-acme"
+#     }
+#   }
+# }

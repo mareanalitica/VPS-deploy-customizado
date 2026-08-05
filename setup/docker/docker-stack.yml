@@ -1,0 +1,461 @@
+version: '3.8'
+
+services:
+  # ==========================================
+  # 1. PROXY REVERSO & SSL (Traefik + Let's Encrypt)
+  # ==========================================
+  traefik:
+    # Pinado em v3.6+ de proposito - o client Docker embutido no Traefik
+    # v2.x tem a versao de API HARDCODED em 1.24, e versoes recentes do
+    # Docker Engine rejeitam isso ("client version 1.24 is too old"), o que
+    # trava o provider "docker" por completo (nenhuma label de nenhum
+    # container e' lida, logo nenhuma rota fica configurada, mesmo com todos
+    # os servicos saudaveis). Setar DOCKER_API_VERSION nao resolve pra v2 -
+    # confirmado em relatos publicos (community.traefik.io, issue #12253 do
+    # repo traefik/traefik). So foi corrigido de vez no v3.6.1+ (negociacao
+    # automatica de versao de API, PR #12256).
+    image: ${TRAEFIK_IMAGE:-traefik:v3.6}
+    command:
+      # "--providers.docker.swarmMode=true" foi REMOVIDO no v3 - precisa do
+      # Swarm Provider dedicado agora (mesmo padrao ja usado no
+      # traefik.yaml do INFRA-MARE, que roda "traefik:latest" e ja resolve
+      # pra v3 ha' tempo). "network=public_net" desambigua o roteamento pra
+      # servicos anexados a mais de uma rede (a maioria dos paineis
+      # administrativos tambem esta' em internal_net).
+      - "--providers.swarm=true"
+      - "--providers.swarm.endpoint=unix:///var/run/docker.sock"
+      - "--providers.swarm.exposedbydefault=false"
+      - "--providers.swarm.network=public_net"
+      - "--entrypoints.web.address=:80"
+      - "--entrypoints.web.http.redirections.entryPoint.to=websecure"
+      - "--entrypoints.web.http.redirections.entryPoint.scheme=https"
+      - "--entrypoints.websecure.address=:443"
+      - "--certificatesresolvers.letsencryptresolver.acme.httpchallenge=true"
+      - "--certificatesresolvers.letsencryptresolver.acme.httpchallenge.entrypoint=web"
+      - "--certificatesresolvers.letsencryptresolver.acme.email=${TRAEFIK_ACME_EMAIL:-admin@localhost}"
+      - "--certificatesresolvers.letsencryptresolver.acme.storage=/letsencrypt/acme.json"
+      - "--ping=true"
+      - "--api.dashboard=true"
+    ports:
+      - target: 80
+        published: 80
+        mode: host
+      - target: 443
+        published: 443
+        mode: host
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+      - traefik_certificates:/letsencrypt
+    networks:
+      - public_net
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q --spider http://localhost:8080/ping || exit 1"]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+      start_period: 20s
+    deploy:
+      labels:
+        - "traefik.enable=true"
+        # Router EXPLICITO pro dashboard (service especial "api@internal",
+        # nao precisa de "loadbalancer.server.port") - sem isso, o Swarm
+        # Provider tenta criar uma rota automatica PRA O PROPRIO CONTAINER
+        # do Traefik e falha ("service infra-traefik error: port is
+        # missing", repetindo a cada healthcheck), porque nenhum router
+        # explicito existia antes. Bonus: dashboard fica protegido pela
+        # mesma allowlist dos outros paineis administrativos.
+        - "traefik.http.routers.traefik-dashboard.rule=Host(`traefik.${DOMAIN_NAME:-localhost}`)"
+        - "traefik.http.routers.traefik-dashboard.entrypoints=websecure"
+        - "traefik.http.routers.traefik-dashboard.tls.certresolver=letsencryptresolver"
+        - "traefik.http.routers.traefik-dashboard.middlewares=admin-allowlist@swarm"
+        - "traefik.http.routers.traefik-dashboard.service=api@internal"
+        # O Swarm Provider EXIGE um service com port MESMO quando o router
+        # aponta pra api@internal - sem isso, o provider dá erro no container
+        # inteiro ("service infra-traefik error: port is missing") e DESCARTA
+        # todos os labels dele, incluindo a definicao da middleware
+        # admin-allowlist, derrubando a middleware pra TODOS os servicos que
+        # dependem dela (rabbitmq, minio, portainer, jenkins). Port 8080 e'
+        # onde o API/ping do Traefik ja escuta (mesma porta do healthcheck).
+        - "traefik.http.services.traefik-dashboard.loadbalancer.server.port=8080"
+        # Definicao da middleware compartilhada pelos paineis administrativos
+        # (Portainer, Jenkins, RabbitMQ management, console do MinIO,
+        # dashboard do proprio Traefik). Mora aqui (no Traefik, sempre de
+        # pe') e nao em outro service - definir num container que pode ficar
+        # 0/1 (ex: Portainer reiniciando) faz o Swarm Provider parar de
+        # publicar os labels dele, e a middleware some pra TODO MUNDO que
+        # depende dela ("admin-allowlist@swarm does not exist" em servicos
+        # saudaveis) - erro real visto em producao.
+        # ADMIN_ALLOWED_CIDRS default e' um IP de documentacao (RFC 5737) que
+        # nunca bate com trafego real - falha fechado ate' o operador
+        # configurar o CIDR real no .env do cliente.
+        - "traefik.http.middlewares.admin-allowlist.ipallowlist.sourcerange=${ADMIN_ALLOWED_CIDRS:-203.0.113.1/32}"
+      resources:
+        limits:
+          memory: 128M
+
+  # ==========================================
+  # 1b. PROXY RESTRITO PARA O DOCKER SOCKET
+  # ==========================================
+  # Unico ponto que toca o socket real do host. Jenkins e Portainer falam
+  # com o daemon Docker por aqui (TCP, rede interna) em vez de montar
+  # /var/run/docker.sock diretamente - reduz o raio de explosao de um
+  # container comprometido (sem SECRETS/EXEC/PLUGINS/SYSTEM habilitados).
+  docker-proxy:
+    image: ${DOCKER_SOCKET_PROXY_IMAGE:-tecnativa/docker-socket-proxy:latest}
+    environment:
+      CONTAINERS: 1
+      IMAGES: 1
+      NETWORKS: 1
+      NODES: 1
+      SERVICES: 1
+      TASKS: 1
+      VOLUMES: 1
+      SWARM: 1
+      BUILD: 1
+      POST: 1
+      INFO: 1
+      VERSION: 1
+      EVENTS: 1
+      CONFIGS: 1
+      # Explicitamente NAO habilitados (default 0): SECRETS, EXEC, PLUGINS,
+      # SYSTEM, DISTRIBUTION, AUTH, SESSION.
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+    networks:
+      - internal_net
+    deploy:
+      resources:
+        limits:
+          memory: 64M
+
+  # ==========================================
+  # 2. GESTAO DE CONTAINERS (Portainer)
+  # ==========================================
+  portainer:
+    image: ${PORTAINER_IMAGE:-portainer/portainer-ce:lts}
+    command: -H tcp://docker-proxy:2375
+    volumes:
+      - portainer_data:/data
+    networks:
+      - public_net
+      - internal_net
+    healthcheck:
+      disable: true
+    deploy:
+      labels:
+        - "traefik.enable=true"
+        - "traefik.http.routers.portainer.rule=Host(`portainer.${DOMAIN_NAME:-localhost}`)"
+        - "traefik.http.routers.portainer.entrypoints=websecure"
+        - "traefik.http.routers.portainer.tls.certresolver=letsencryptresolver"
+        - "traefik.http.routers.portainer.middlewares=admin-allowlist@swarm"
+        - "traefik.http.services.portainer.loadbalancer.server.port=9000"
+      resources:
+        limits:
+          memory: 256M
+
+  # ==========================================
+  # 3. CI/CD & BUILDS LOCAIS (Jenkins)
+  # ==========================================
+  jenkins:
+    image: ${JENKINS_IMAGE:-vps-deploy-jenkins:lts-jdk17}
+    environment:
+      JENKINS_ADMIN_ID: ${JENKINS_ADMIN_USER:-admin}
+      JAVA_OPTS: "-Djenkins.install.runSetupWizard=false"
+      DOCKER_HOST: tcp://docker-proxy:2375
+    secrets:
+      - jenkins_admin_password
+    volumes:
+      - jenkins_data:/var/jenkins_home
+    configs:
+      # Configs do Swarm sao IMUTAVEIS, igual aos secrets - "docker stack
+      # deploy" nao consegue atualizar o CONTEUDO de um config existente
+      # (so' labels), so' criar um novo. Por isso o nome tem sufixo de
+      # versao: sempre que o conteudo de init-admin.groovy mudar, bump
+      # aqui E na definicao no bloco "configs:" no fim do arquivo.
+      - source: jenkins_init_v3
+        target: /usr/share/jenkins/ref/init.groovy.d/init-admin.groovy
+    networks:
+      - public_net
+      - internal_net
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fsS http://localhost:8080/login > /dev/null"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 60s
+    deploy:
+      labels:
+        - "traefik.enable=true"
+        - "traefik.http.routers.jenkins.rule=Host(`jenkins.${DOMAIN_NAME:-localhost}`)"
+        - "traefik.http.routers.jenkins.entrypoints=websecure"
+        - "traefik.http.routers.jenkins.tls.certresolver=letsencryptresolver"
+        - "traefik.http.routers.jenkins.middlewares=admin-allowlist@swarm"
+        - "traefik.http.services.jenkins.loadbalancer.server.port=8080"
+      resources:
+        limits:
+          memory: 768M
+
+  # ==========================================
+  # 4. BANCOS DE DADOS & CACHE
+  # ==========================================
+  mongodb:
+    image: ${MONGO_IMAGE:-mongo:7}
+    environment:
+      MONGO_INITDB_ROOT_USERNAME: ${MONGO_INITDB_ROOT_USERNAME:-root}
+      MONGO_INITDB_ROOT_PASSWORD_FILE: /run/secrets/mongo_root_password
+    secrets:
+      - mongo_root_password
+    volumes:
+      - mongo_data:/data/db
+    networks:
+      - internal_net
+    healthcheck:
+      test: ["CMD", "mongosh", "--quiet", "--eval", "db.adminCommand('ping')"]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+      start_period: 30s
+    deploy:
+      # Alguns clientes nao usam Mongo (ex: apps ainda sem integracao de
+      # banco implementada) - defina MONGO_REPLICAS=0 no .env desse cliente
+      # pra nao gastar RAM com um servico ocioso. Default 1: nenhum cliente
+      # existente e' afetado.
+      replicas: ${MONGO_REPLICAS:-1}
+      resources:
+        limits:
+          memory: 512M
+
+  redis:
+    image: ${REDIS_IMAGE:-redis:7-alpine}
+    # A imagem oficial do Redis nao tem convencao nativa de "_FILE" para
+    # --requirepass, entao lemos o secret manualmente no start do processo.
+    command: ["sh", "-c", "exec redis-server --requirepass \"$$(cat /run/secrets/redis_password)\""]
+    secrets:
+      - redis_password
+    volumes:
+      - redis_data:/data
+    networks:
+      - internal_net
+    healthcheck:
+      test: ["CMD-SHELL", "redis-cli -a \"$$(cat /run/secrets/redis_password)\" --no-auth-warning ping | grep PONG"]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+    deploy:
+      resources:
+        limits:
+          memory: 128M
+
+  postvector:
+    image: ${POSTVECTOR_IMAGE:-pgvector/pgvector:pg16}
+    # pg_stat_statements precisa estar em shared_preload_libraries (so' tem
+    # efeito num restart do processo, nao basta "CREATE EXTENSION") - exigido
+    # pela migration InitSchema do EvoCRM (evo-auth-service), que o vendor nao
+    # torna opcional. "vector" nao precisa disso (nao usa memoria compartilhada).
+    command: ["postgres", "-c", "shared_preload_libraries=pg_stat_statements"]
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-postgres}
+      POSTGRES_PASSWORD_FILE: /run/secrets/postgres_password
+      POSTGRES_DB: ${POSTGRES_DB:-app_db}
+    secrets:
+      - postgres_password
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    networks:
+      - internal_net
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $$POSTGRES_USER"]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+      start_period: 30s
+    deploy:
+      resources:
+        limits:
+          memory: 512M
+
+  # ==========================================
+  # 5. MESSAGING & STORAGE
+  # ==========================================
+  rabbitmq:
+    image: ${RABBITMQ_IMAGE:-rabbitmq:3-management-alpine}
+    # Simplificado de proposito: RABBITMQ_DEFAULT_PASS_FILE (Docker Secret)
+    # causava o container morrer sem log nenhum ("non-zero exit (1)") -
+    # revertido pra env var pura, igual ao base-services.yaml comprovadamente
+    # funcional em producao na infra existente da MARE. Reforcar via secret
+    # de novo fica como proximo passo separado, testado com calma.
+    environment:
+      RABBITMQ_DEFAULT_USER: ${RABBITMQ_DEFAULT_USER:-admin}
+      RABBITMQ_DEFAULT_PASS: ${RABBITMQ_DEFAULT_PASS}
+    volumes:
+      - rabbitmq_data:/var/lib/rabbitmq
+    networks:
+      - internal_net
+      - public_net
+    healthcheck:
+      test: ["CMD-SHELL", "rabbitmq-diagnostics -q ping"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
+    deploy:
+      labels:
+        - "traefik.enable=true"
+        - "traefik.http.routers.rabbitmq.rule=Host(`rabbitmq.${DOMAIN_NAME:-localhost}`)"
+        - "traefik.http.routers.rabbitmq.entrypoints=websecure"
+        - "traefik.http.routers.rabbitmq.tls.certresolver=letsencryptresolver"
+        - "traefik.http.routers.rabbitmq.middlewares=admin-allowlist@swarm"
+        - "traefik.http.services.rabbitmq.loadbalancer.server.port=15672"
+      resources:
+        limits:
+          memory: 256M
+
+  minio:
+    image: ${MINIO_IMAGE:-minio/minio:latest}
+    command: server /data --console-address ":9001"
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER:-minioadmin}
+      MINIO_ROOT_PASSWORD_FILE: /run/secrets/minio_root_password
+    secrets:
+      - minio_root_password
+    volumes:
+      - minio_data:/data
+    networks:
+      - internal_net
+      - public_net
+    healthcheck:
+      test: ["CMD", "curl", "-sf", "http://localhost:9000/minio/health/live"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 15s
+    deploy:
+      labels:
+        - "traefik.enable=true"
+        # "router.service=" explicito nos dois - sem isso o Swarm Provider
+        # nao consegue vincular automaticamente um router a um service
+        # quando o MESMO container declara mais de um service (minio-api E
+        # minio-console) - erro real visto em producao: "Router minio-api
+        # cannot be linked automatically with multiple Services".
+        - "traefik.http.routers.minio-console.rule=Host(`minio.${DOMAIN_NAME:-localhost}`)"
+        - "traefik.http.routers.minio-console.entrypoints=websecure"
+        - "traefik.http.routers.minio-console.tls.certresolver=letsencryptresolver"
+        - "traefik.http.routers.minio-console.middlewares=admin-allowlist@swarm"
+        - "traefik.http.routers.minio-console.service=minio-console"
+        - "traefik.http.services.minio-console.loadbalancer.server.port=9001"
+        - "traefik.http.routers.minio-api.rule=Host(`s3.${DOMAIN_NAME:-localhost}`)"
+        - "traefik.http.routers.minio-api.entrypoints=websecure"
+        - "traefik.http.routers.minio-api.tls.certresolver=letsencryptresolver"
+        - "traefik.http.routers.minio-api.service=minio-api"
+        - "traefik.http.services.minio-api.loadbalancer.server.port=9000"
+      # Ver nota de MONGO_REPLICAS acima - mesmo racional (ex: clientes cujas
+      # apps usam storage local em vez de S3, como o EvoCRM neste projeto).
+      replicas: ${MINIO_REPLICAS:-1}
+      resources:
+        limits:
+          memory: 256M
+
+  # ==========================================
+  # 6. AUTOMACAO DE WORKFLOWS (n8n)
+  # ==========================================
+  n8n:
+    image: ${N8N_IMAGE:-n8nio/n8n:1}
+    environment:
+      # N8N_ENCRYPTION_KEY permanece como env var (nao migrado para Docker
+      # Secret nesta fase - o entrypoint da imagem oficial nao tem suporte
+      # documentado e confirmado a "_FILE" para esta variavel; sobrescrever
+      # o command/entrypoint sem validar contra a imagem real arrisca quebrar
+      # o boot do container). Ainda assim o valor e' gerado aleatoriamente
+      # pelo manage-env.js e nunca commitado no Git.
+      - N8N_ENCRYPTION_KEY=${N8N_ENCRYPTION_KEY}
+      - N8N_PORT=5678
+    networks:
+      - public_net
+      - internal_net
+    volumes:
+      - n8n_data:/home/node/.n8n
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q --spider http://localhost:5678/healthz || exit 1"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 15s
+    deploy:
+      labels:
+        - "traefik.enable=true"
+        - "traefik.http.routers.n8n.rule=Host(`n8n.${DOMAIN_NAME:-localhost}`)"
+        - "traefik.http.routers.n8n.entrypoints=websecure"
+        - "traefik.http.routers.n8n.tls.certresolver=letsencryptresolver"
+        - "traefik.http.services.n8n.loadbalancer.server.port=5678"
+      # Ver nota de MONGO_REPLICAS acima.
+      replicas: ${N8N_REPLICAS:-1}
+      resources:
+        limits:
+          memory: 512M
+
+  # ==========================================
+  # 7. AUTOMACAO & TESTES E2E (Chromium Headless)
+  # ==========================================
+  chromium-automation:
+    image: ${CHROMIUM_IMAGE:-zenika/alpine-chrome:latest}
+    command: [
+      "--no-sandbox",
+      "--disable-gpu",
+      "--remote-debugging-address=0.0.0.0",
+      "--remote-debugging-port=9222"
+    ]
+    networks:
+      - internal_net
+    deploy:
+      # Ver nota de MONGO_REPLICAS acima - servico so' de teste/QA, nao
+      # voltado ao cliente final; adie em deploys de demonstracao.
+      replicas: ${CHROMIUM_REPLICAS:-1}
+      resources:
+        limits:
+          memory: 512M
+
+configs:
+  jenkins_init_v3:
+    file: ../jenkins/init-admin.groovy
+
+secrets:
+  mongo_root_password:
+    external: true
+    name: ${MONGO_ROOT_PASSWORD_SECRET:-mongo_root_password_v1}
+  postgres_password:
+    external: true
+    name: ${POSTGRES_PASSWORD_SECRET:-postgres_password_v1}
+  redis_password:
+    external: true
+    name: ${REDIS_PASSWORD_SECRET:-redis_password_v1}
+  rabbitmq_pass:
+    external: true
+    name: ${RABBITMQ_PASS_SECRET:-rabbitmq_pass_v1}
+  minio_root_password:
+    external: true
+    name: ${MINIO_ROOT_PASSWORD_SECRET:-minio_root_password_v1}
+  jenkins_admin_password:
+    external: true
+    name: ${JENKINS_ADMIN_PASSWORD_SECRET:-jenkins_admin_password_v1}
+
+networks:
+  # Ambas criadas fora do lifecycle de qualquer stack (deploy.sh) - se
+  # "internal_net" ficasse sem "external: true" aqui, o Swarm a criaria
+  # com o nome prefixado "infra_internal_net", o que quebraria qualquer
+  # outro stack (apps-stack.yml, evocrm-stack.yml, evogo-stack.yml)
+  # tentando se conectar a ela pelo nome simples.
+  public_net:
+    external: true
+  internal_net:
+    external: true
+
+volumes:
+  traefik_certificates:
+  portainer_data:
+  jenkins_data:
+  mongo_data:
+  redis_data:
+  postgres_data:
+  rabbitmq_data:
+  minio_data:
+  n8n_data:

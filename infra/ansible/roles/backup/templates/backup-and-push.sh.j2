@@ -1,0 +1,21 @@
+#!/usr/bin/env bash
+# Gerado pela role Ansible "backup" - nao editar direto na VPS, edite o
+# template em infra/ansible/roles/backup/templates/backup-and-push.sh.j2
+set -e
+
+cd "{{ deploy_root }}"
+bash setup/scripts/backup-volumes.sh
+
+LATEST_BACKUP_DIR="$(ls -1dt setup/backups/volumes/*/ | head -1)"
+DEST="{{ backup_remote_rclone_target }}/$(basename "$LATEST_BACKUP_DIR")"
+
+echo "☁️  Enviando ${LATEST_BACKUP_DIR} para ${DEST} via rclone..."
+rclone copy "$LATEST_BACKUP_DIR" "$DEST" --stats-one-line -v
+
+# NOTA: esta copia NAO e' criptografada em repouso no destino remoto - so
+# em transito (TLS, se o remote do rclone usar HTTPS). Para criptografia
+# em repouso, configure um remote "crypt" do rclone por cima do remote real
+# (`rclone config` -> tipo "crypt") e aponte backup_remote_rclone_target
+# para o remote crypt em vez do remote bruto. Deliberadamente nao
+# automatizado aqui: geracao/perda de uma chave de criptografia de backup
+# e' um risco operacional serio demais para configurar sem voce por perto.

@@ -1,0 +1,131 @@
+version: '3.8'
+
+# =============================================================================
+# Stack das aplicacoes do cliente (api-nestjs, web-vite).
+# Deploy separado da infra base ("infra") - atualizar a app nao mexe em
+# Traefik/Jenkins/bancos, e vice-versa.
+# Requer a stack "infra" ja implantada (usa public_net/internal_net e os
+# bancos/roles dedicados criados por setup/scripts/bootstrap-app-databases.sh).
+# =============================================================================
+
+services:
+  api-nestjs:
+    image: ${API_NESTJS_IMAGE:-api-nestjs:latest}
+    environment:
+      PORT: 3000
+      NODE_ENV: production
+      POSTGRES_HOST: postvector
+      POSTGRES_PORT: 5432
+      POSTGRES_USER: api_nestjs_app
+      POSTGRES_PASSWORD_FILE: /run/secrets/api_nestjs_db_password
+      POSTGRES_DB: ${POSTGRES_DB:-app_db}
+      REDIS_HOST: redis
+      REDIS_PORT: 6379
+      RABBITMQ_HOST: rabbitmq
+      RABBITMQ_VHOST: api_nestjs_vhost
+      RABBITMQ_USER: api_nestjs_app
+    secrets:
+      - api_nestjs_db_password
+      - redis_password
+      - api_nestjs_rabbitmq_password
+    networks:
+      - public_net
+      - internal_net
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q --spider http://localhost:3000/ || exit 1"]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+      start_period: 15s
+    deploy:
+      replicas: ${API_NESTJS_REPLICAS:-1}
+      labels:
+        - "traefik.enable=true"
+        - "traefik.http.routers.api-nestjs.rule=Host(`api.${DOMAIN_NAME:-localhost}`)"
+        - "traefik.http.routers.api-nestjs.entrypoints=websecure"
+        - "traefik.http.routers.api-nestjs.tls.certresolver=letsencryptresolver"
+        - "traefik.http.services.api-nestjs.loadbalancer.server.port=3000"
+      resources:
+        limits:
+          memory: 256M
+
+  web-vite:
+    image: ${WEB_VITE_IMAGE:-web-vite:latest}
+    networks:
+      - public_net
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q --spider http://localhost:80/ || exit 1"]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+    deploy:
+      replicas: ${WEB_VITE_REPLICAS:-1}
+      labels:
+        - "traefik.enable=true"
+        - "traefik.http.routers.web-vite.rule=Host(`${DOMAIN_NAME:-localhost}`)"
+        - "traefik.http.routers.web-vite.entrypoints=websecure"
+        - "traefik.http.routers.web-vite.tls.certresolver=letsencryptresolver"
+        - "traefik.http.services.web-vite.loadbalancer.server.port=80"
+      resources:
+        limits:
+          memory: 64M
+
+  # ---------------------------------------------------------------------------
+  # RESERVADO - api-nestjs-payment-service ainda nao tem codigo implementado
+  # (so um README com as env vars esperadas). Banco/role/secrets ja preparados
+  # (bootstrap-app-databases.sh, .env.example), mas o servico fica comentado
+  # ate a app existir de verdade - "docker stack deploy" ignora blocos
+  # comentados, entao isso nao sobe nada hoje.
+  # ---------------------------------------------------------------------------
+  # payment-service:
+  #   image: ${PAYMENT_SERVICE_IMAGE:-payment-service:latest}
+  #   environment:
+  #     PORT: 3001
+  #     POSTGRES_HOST: postvector
+  #     POSTGRES_USER: payment_app
+  #     POSTGRES_PASSWORD_FILE: /run/secrets/payment_db_password
+  #     POSTGRES_DB: payment_db
+  #   secrets:
+  #     - payment_db_password
+  #     - payment_gateway_key
+  #     - payment_webhook_secret
+  #   networks:
+  #     - public_net
+  #     - internal_net
+  #   deploy:
+  #     labels:
+  #       - "traefik.enable=true"
+  #       - "traefik.http.routers.payment-service.rule=Host(`pay.${DOMAIN_NAME:-localhost}`)"
+  #       - "traefik.http.routers.payment-service.entrypoints=websecure"
+  #       - "traefik.http.routers.payment-service.tls.certresolver=letsencryptresolver"
+  #       - "traefik.http.services.payment-service.loadbalancer.server.port=3001"
+  #     resources:
+  #       limits:
+  #         memory: 256M
+
+networks:
+  public_net:
+    external: true
+  internal_net:
+    external: true
+
+secrets:
+  api_nestjs_db_password:
+    external: true
+    name: ${API_NESTJS_DB_PASSWORD_SECRET:-api_nestjs_db_password_v1}
+  api_nestjs_rabbitmq_password:
+    external: true
+    name: ${API_NESTJS_RABBITMQ_PASSWORD_SECRET:-api_nestjs_rabbitmq_password_v1}
+  redis_password:
+    external: true
+    name: ${REDIS_PASSWORD_SECRET:-redis_password_v1}
+  # payment_db_password:
+  #   external: true
+  #   name: ${PAYMENT_DB_PASSWORD_SECRET:-payment_db_password_v1}
+  # payment_gateway_key:
+  #   external: true
+  #   name: ${PAYMENT_GATEWAY_KEY_SECRET:-payment_gateway_key_v1}
+  # payment_webhook_secret:
+  #   external: true
+  #   name: ${PAYMENT_WEBHOOK_SECRET_SECRET:-payment_webhook_secret_v1}

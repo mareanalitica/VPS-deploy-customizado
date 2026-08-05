@@ -1,0 +1,66 @@
+---
+- name: Provisionar e configurar a infraestrutura de um cliente
+  hosts: vps_clients
+  gather_facts: true
+
+  pre_tasks:
+    - name: Garantir git instalado (para sincronizar o repo)
+      ansible.builtin.apt:
+        name: git
+        state: present
+        update_cache: true
+
+    - name: Sincronizar o repo do boilerplate na VPS
+      ansible.builtin.git:
+        repo: "{{ repo_git_url }}"
+        dest: "{{ deploy_root }}"
+        version: "{{ repo_git_version }}"
+      register: repo_sync
+
+  roles:
+    - docker
+    - secrets
+    - stack_deploy
+    - backup
+
+- name: Aplicar hardening do host (UFW, fail2ban, SSH key-only, chain DOCKER-USER)
+  # De proposito por ULTIMO, depois de tudo mais confirmado funcionando -
+  # rodar isso cedo (como estava antes) significa perder acesso SSH/rede no
+  # meio da configuracao se algo no hardening reagir mal (ex: rate-limit do
+  # UFW na porta 22 sendo atingido durante o proprio processo de debug/deploy).
+  # Docker ja esta instalado a essa altura (play anterior), entao a chain
+  # DOCKER-USER e' protegida numa unica passada mesmo assim.
+  hosts: vps_clients
+  gather_facts: false
+  roles:
+    - hardening
+
+- name: Configurar o firewall gerenciado da Hostinger (via API, roda no control node)
+  # Tambem por ULTIMO, mesmo racional acima - so trava o acesso de rede
+  # depois que o resto (Docker, stack, hardening do host) ja esta de pe.
+  #
+  # "hosts: vps_clients" (nao "localhost") de proposito: com "--limit
+  # <client_name>", o Ansible filtra hosts pelo NOME contra o limite - uma
+  # play com "hosts: localhost" nunca bate com "--limit mare" e a play
+  # inteira e' pulada silenciosamente ("skipping: no hosts matched").
+  # "connection: local" faz as tasks executarem no control node mesmo assim
+  # (e' so uma chamada de API, nao precisa de SSH na VPS).
+  hosts: vps_clients
+  connection: local
+  gather_facts: false
+  tags:
+    # Deixa essa play pulavel com "--skip-tags hostinger_firewall" - a API
+    # de firewall da Hostinger se mostrou instavel em uso real (grupos
+    # duplicados, sync assincrono, ver historico de debug), entao configurar
+    # isso separadamente (manual, com calma) e' uma escolha valida por ora.
+    - hostinger_firewall
+  vars:
+    # Sem isso, o Ansible descobre/armazena em cache o Python LOCAL (control
+    # node) como se fosse "o interpretador do host mare" (porque "connection:
+    # local" faz o modulo rodar localmente mas o host logico continua sendo
+    # "mare") - qualquer play seguinte que conecte via SSH de verdade herdaria
+    # esse caminho local errado. Fixar explicitamente pro Python que roda o
+    # proprio ansible-playbook evita essa descoberta/cache incorreta.
+    ansible_python_interpreter: "{{ ansible_playbook_python }}"
+  roles:
+    - hostinger_firewall

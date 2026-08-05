@@ -1,0 +1,118 @@
+---
+# Cobre o gap do provider Terraform da Hostinger (nao tem recurso de
+# firewall) chamando a API REST publica diretamente. Best-effort: os campos
+# 'protocol'/'source' (defaults/main.yml) nao puderam ser 100% confirmados
+# contra a especificacao OpenAPI real nesta sessao - se a chamada falhar,
+# o erro da propria API da Hostinger deve listar os valores aceitos; ajuste
+# os defaults com base nisso. Ver infra/ansible/README.md e ADR 0004.
+
+- name: Resolver token da API Hostinger (env var - nao fica em group_vars)
+  ansible.builtin.set_fact:
+    hostinger_api_token: "{{ lookup('env', 'HOSTINGER_API_TOKEN') }}"
+  no_log: true
+
+- name: Falhar cedo se HOSTINGER_API_TOKEN nao estiver exportado
+  ansible.builtin.assert:
+    that: hostinger_api_token | length > 0
+    fail_msg: >-
+      Exporte HOSTINGER_API_TOKEN antes de rodar este playbook - mesmo
+      token usado pelo Terraform (hPanel -> conta -> API).
+
+- name: Falhar cedo se server_id nao veio do inventario dinamico
+  ansible.builtin.assert:
+    that: hostinger_vps_id is defined and hostinger_vps_id | length > 0
+    fail_msg: >-
+      hostinger_vps_id nao esta disponivel para este host - confirme que
+      infra/ansible/inventory/terraform_inventory.py foi atualizado e que
+      "terraform apply" ja rodou para este cliente.
+
+- name: Listar firewalls existentes na conta Hostinger
+  ansible.builtin.uri:
+    url: "{{ hostinger_api_base }}/api/vps/v1/firewall"
+    method: GET
+    headers:
+      Authorization: "Bearer {{ hostinger_api_token }}"
+    status_code: [200]
+  register: firewall_list
+  no_log: true
+
+- name: Selecionar o firewall deste cliente, se ja existir
+  ansible.builtin.set_fact:
+    existing_firewall: >-
+      {{
+        (firewall_list.json.data | default(firewall_list.json, true) | default([], true)
+          | selectattr('name', 'equalto', client_name + '-fw') | list | first) | default(none, true)
+      }}
+
+- name: Criar firewall do cliente (se ainda nao existir)
+  ansible.builtin.uri:
+    url: "{{ hostinger_api_base }}/api/vps/v1/firewall"
+    method: POST
+    headers:
+      Authorization: "Bearer {{ hostinger_api_token }}"
+    body_format: json
+    body:
+      name: "{{ client_name }}-fw"
+    status_code: [200, 201]
+  register: firewall_created
+  when: existing_firewall is none
+  no_log: true
+
+- name: Definir o ID do firewall a usar
+  ansible.builtin.set_fact:
+    hostinger_firewall_id: >-
+      {{ existing_firewall.id if existing_firewall is not none else (firewall_created.json.data | default(firewall_created.json, true)).id }}
+
+- name: Zerar a lista acumuladora de regras de SSH
+  ansible.builtin.set_fact:
+    hostinger_firewall_ssh_rules: []
+
+- name: Montar uma regra de SSH por CIDR autorizado
+  # Jinja2 (motor de templates do Ansible) NAO suporta list comprehension
+  # estilo Python ("[x for x in y]") dentro de "{{ }}" - only "+"/concat de
+  # listas e' valido ali. Por isso usamos o "loop:" nativo do Ansible pra
+  # iterar e acumular, em vez de tentar uma comprehension inline.
+  #
+  # "source_detail" precisa do IP puro, sem sufixo "/32" - confirmado
+  # empiricamente contra a API real (uma regra criada pela propria UI do
+  # hPanel manda so' o IP, sem CIDR redundante; mandar "/32" faz a API
+  # devolver 422 "The selected source is invalid", mensagem que nao deixa
+  # claro qual campo realmente causou o erro).
+  ansible.builtin.set_fact:
+    hostinger_firewall_ssh_rules: >-
+      {{ hostinger_firewall_ssh_rules + [{'protocol': hostinger_firewall_protocol, 'port': '22', 'source': hostinger_firewall_source_restricted, 'source_detail': (item | regex_replace('/32$', ''))}] }}
+  loop: "{{ admin_allowed_cidrs.split(',') | map('trim') | list }}"
+
+- name: Montar a lista final de regras (SSH restrito + HTTP/HTTPS publicos)
+  ansible.builtin.set_fact:
+    hostinger_firewall_rules: >-
+      {{
+        hostinger_firewall_ssh_rules + [
+          {'protocol': hostinger_firewall_protocol, 'port': '80', 'source': hostinger_firewall_source_open, 'source_detail': 'any'},
+          {'protocol': hostinger_firewall_protocol, 'port': '443', 'source': hostinger_firewall_source_open, 'source_detail': 'any'}
+        ]
+      }}
+
+- name: Substituir todas as regras do firewall (idempotente - PUT replace-all)
+  ansible.builtin.uri:
+    url: "{{ hostinger_api_base }}/api/vps/v1/firewall/{{ hostinger_firewall_id }}/rules"
+    method: PUT
+    headers:
+      Authorization: "Bearer {{ hostinger_api_token }}"
+    body_format: json
+    # Confirmado contra a API real: o corpo precisa ser um objeto
+    # {"rules": [...]}, nao um array solto - erro real recebido antes desta
+    # correcao: {"errors":{"rules":["The rules field is required."]}}
+    body:
+      rules: "{{ hostinger_firewall_rules }}"
+    status_code: [200, 201, 204]
+  no_log: true
+
+- name: Ativar o firewall nesta VPS
+  ansible.builtin.uri:
+    url: "{{ hostinger_api_base }}/api/vps/v1/firewall/{{ hostinger_firewall_id }}/activate/{{ hostinger_vps_id }}"
+    method: POST
+    headers:
+      Authorization: "Bearer {{ hostinger_api_token }}"
+    status_code: [200, 201, 204, 409] # 409 tratado como "ja ativo" - suposicao razoavel, nao confirmada
+  no_log: true

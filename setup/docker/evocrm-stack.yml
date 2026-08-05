@@ -1,0 +1,416 @@
+version: '3.8'
+
+# =============================================================================
+# Stack do EvoCRM (Evo AI CRM Community), adaptado do compose original em
+# INFRA-MARE/projetos/crm-mare para o modelo desta VPS:
+#   - rede propria (public_net/internal_net) em vez de "marenet" externa
+#   - Postgres/Redis desta VPS (postvector/redis), com role e banco DEDICADOS
+#     (evocrm_app / evo_community), nunca o superusuario "postgres"
+#   - segredos via Docker Swarm Secrets (evocrm-load-secrets.sh), nao env var pura,
+#     onde a imagem permite (ver nota sobre evocrm_core/evocrm_bot_runtime abaixo)
+#   - falha real de migracao de banco derruba o container em vez de seguir
+#     rodando contra um schema quebrado (original tinha "|| echo continuing...")
+#
+# Requer: stack "infra" ja implantada, e setup/scripts/bootstrap-app-databases.sh
+# ja rodado (cria o role "evocrm_app" e o banco "evo_community" com pgvector).
+#
+# Imagens travadas em "1.0.0-rc7" (release candidate do vendor, nao GA) -
+# risco documentado, nao GA, avaliar pin por digest antes de producao real.
+# =============================================================================
+
+services:
+  evocrm_gateway:
+    image: evoapicloud/evo-crm-gateway:1.0.0-rc7
+    networks:
+      - public_net
+      - internal_net
+    environment:
+      - AUTH_UPSTREAM=evocrm_auth:3001
+      - CRM_UPSTREAM=evocrm_crm:3000
+      - CORE_UPSTREAM=evocrm_core:5555
+      - PROCESSOR_UPSTREAM=evocrm_processor:8000
+      - BOT_RUNTIME_UPSTREAM=evocrm_bot_runtime:8080
+    deploy:
+      replicas: ${EVOCRM_REPLICAS:-1}
+      labels:
+        - "traefik.enable=true"
+        - "traefik.http.routers.evocrm_gateway.rule=Host(`${CRM_API_DOMAIN:-crmapi.localhost}`)"
+        - "traefik.http.routers.evocrm_gateway.entrypoints=websecure"
+        - "traefik.http.routers.evocrm_gateway.tls.certresolver=letsencryptresolver"
+        - "traefik.http.services.evocrm_gateway.loadbalancer.server.port=3030"
+        - "traefik.http.services.evocrm_gateway.loadbalancer.passHostHeader=true"
+      resources:
+        limits:
+          memory: 128M
+
+  evocrm_auth:
+    image: evoapicloud/evo-auth-service-community:1.0.0-rc7
+    command: ["/config/load-secrets.sh", "bash", "-c", "bundle exec rails db:migrate && bundle exec rails s -p 3001 -b 0.0.0.0"]
+    configs:
+      - source: evocrm_load_secrets_v2
+        target: /config/load-secrets.sh
+        mode: 0555
+    secrets:
+      - evocrm_db_password
+      - redis_password
+      - crm_secret_key_base
+      - crm_jwt_secret_key
+      - crm_evoai_crm_api_token
+      - crm_doorkeeper_jwt_secret_key
+    networks:
+      - internal_net
+    environment:
+      RAILS_ENV: production
+      RAILS_MAX_THREADS: 5
+      POSTGRES_HOST: postvector
+      POSTGRES_PORT: 5432
+      POSTGRES_USERNAME: evocrm_app
+      POSTGRES_DATABASE: evo_community
+      POSTGRES_SSLMODE: disable  # trafego ja criptografado na overlay internal_net (driver_opts encrypted)
+      FRONTEND_URL: https://${CRM_WEB_DOMAIN:-crm.localhost}
+      BACKEND_URL: https://${CRM_API_DOMAIN:-crmapi.localhost}
+      CORS_ORIGINS: https://${CRM_WEB_DOMAIN:-crm.localhost},https://${CRM_API_DOMAIN:-crmapi.localhost}
+      SMTP_DOMAIN: ${CRM_SMTP_DOMAIN:-localhost}
+      MAILER_SENDER_EMAIL: ${CRM_SMTP_FROM:-noreply@localhost}
+      SMTP_USERNAME: ${CRM_SMTP_USER:-}
+      SMTP_ADDRESS: ${CRM_SMTP_HOST:-}
+      SMTP_PORT: ${CRM_SMTP_PORT:-587}
+      SMTP_AUTHENTICATION: plain
+      SMTP_ENABLE_STARTTLS_AUTO: "true"
+      DOORKEEPER_JWT_ALGORITHM: hs256
+      DOORKEEPER_JWT_ISS: evo-auth-service
+      MFA_ISSUER: EvoCRM
+      SIDEKIQ_CONCURRENCY: 10
+      ACTIVE_STORAGE_SERVICE: local
+      ACTIVE_STORAGE_URL: https://${CRM_API_DOMAIN:-crmapi.localhost}
+      OAUTH_TOKEN_EXPIRES_IN: 28800
+    volumes:
+      - evoauth_storage:/app/storage
+    deploy:
+      replicas: ${EVOCRM_REPLICAS:-1}
+      resources:
+        limits:
+          memory: 512M
+
+  evocrm_auth_sidekiq:
+    image: evoapicloud/evo-auth-service-community:1.0.0-rc7
+    command: ["/config/load-secrets.sh", "bundle", "exec", "sidekiq", "-C", "config/sidekiq.yml"]
+    healthcheck:
+      test: ["CMD-SHELL", "pgrep -f sidekiq || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
+    configs:
+      - source: evocrm_load_secrets_v2
+        target: /config/load-secrets.sh
+        mode: 0555
+    secrets:
+      - evocrm_db_password
+      - redis_password
+      - crm_secret_key_base
+      - crm_jwt_secret_key
+      - crm_evoai_crm_api_token
+      - crm_doorkeeper_jwt_secret_key
+    networks:
+      - internal_net
+    environment:
+      RAILS_ENV: production
+      POSTGRES_HOST: postvector
+      POSTGRES_PORT: 5432
+      POSTGRES_USERNAME: evocrm_app
+      POSTGRES_DATABASE: evo_community
+      POSTGRES_SSLMODE: disable
+      FRONTEND_URL: https://${CRM_WEB_DOMAIN:-crm.localhost}
+      BACKEND_URL: https://${CRM_API_DOMAIN:-crmapi.localhost}
+      CORS_ORIGINS: https://${CRM_WEB_DOMAIN:-crm.localhost},https://${CRM_API_DOMAIN:-crmapi.localhost}
+      SMTP_DOMAIN: ${CRM_SMTP_DOMAIN:-localhost}
+      MAILER_SENDER_EMAIL: ${CRM_SMTP_FROM:-noreply@localhost}
+      SMTP_USERNAME: ${CRM_SMTP_USER:-}
+      SMTP_ADDRESS: ${CRM_SMTP_HOST:-}
+      SMTP_PORT: ${CRM_SMTP_PORT:-587}
+      SMTP_AUTHENTICATION: plain
+      SMTP_ENABLE_STARTTLS_AUTO: "true"
+      DOORKEEPER_JWT_ALGORITHM: hs256
+      DOORKEEPER_JWT_ISS: evo-auth-service
+      MFA_ISSUER: EvoCRM
+      SIDEKIQ_CONCURRENCY: 10
+      ACTIVE_STORAGE_SERVICE: local
+      ACTIVE_STORAGE_URL: https://${CRM_API_DOMAIN:-crmapi.localhost}
+      OAUTH_TOKEN_EXPIRES_IN: 28800
+    volumes:
+      - evoauth_storage:/app/storage
+    deploy:
+      replicas: ${EVOCRM_REPLICAS:-1}
+      resources:
+        limits:
+          memory: 384M
+
+  evocrm_crm:
+    image: evoapicloud/evo-ai-crm-community:1.0.0-rc7
+    entrypoint: ["/config/load-secrets.sh"]
+    command:
+      - "/app/docker/entrypoints/rails.sh"
+      - "sh"
+      - "-c"
+      - >-
+        i=0;
+        until wget -qO- http://evocrm_auth:3001/health >/dev/null 2>&1; do
+          i=$$((i+1));
+          if [ $$i -ge 60 ]; then echo 'Timeout esperando evocrm_auth'; exit 1; fi;
+          echo 'Waiting for auth...'; sleep 5;
+        done;
+        bundle exec rails s -p 3000 -b 0.0.0.0
+    configs:
+      - source: evocrm_load_secrets_v2
+        target: /config/load-secrets.sh
+        mode: 0555
+    secrets:
+      - evocrm_db_password
+      - redis_password
+      - crm_secret_key_base
+      - crm_jwt_secret_key
+      - crm_evoai_crm_api_token
+      - crm_bot_runtime_secret
+    networks:
+      - internal_net
+    environment:
+      RAILS_ENV: production
+      RAILS_SERVE_STATIC_FILES: "true"
+      RAILS_LOG_TO_STDOUT: "true"
+      POSTGRES_HOST: postvector
+      POSTGRES_PORT: 5432
+      POSTGRES_USERNAME: evocrm_app
+      POSTGRES_DATABASE: evo_community
+      POSTGRES_SSLMODE: disable
+      EVO_AUTH_SERVICE_URL: http://evocrm_auth:3001
+      EVO_AI_CORE_SERVICE_URL: http://evocrm_core:5555
+      BACKEND_URL: https://${CRM_API_DOMAIN:-crmapi.localhost}
+      FRONTEND_URL: https://${CRM_WEB_DOMAIN:-crm.localhost}
+      CORS_ORIGINS: https://${CRM_WEB_DOMAIN:-crm.localhost},https://${CRM_API_DOMAIN:-crmapi.localhost}
+      DISABLE_TELEMETRY: "true"
+      LOG_LEVEL: info
+      ENABLE_ACCOUNT_SIGNUP: "true"
+      ENABLE_PUSH_RELAY_SERVER: "true"
+      ENABLE_INBOX_EVENTS: "true"
+      BOT_RUNTIME_URL: http://evocrm_bot_runtime:8080
+      BOT_RUNTIME_POSTBACK_BASE_URL: http://evocrm_crm:3000
+      ACTIVE_STORAGE_SERVICE: local
+      ACTIVE_STORAGE_URL: https://${CRM_API_DOMAIN:-crmapi.localhost}
+    volumes:
+      - evocrm_storage:/app/storage
+    deploy:
+      replicas: ${EVOCRM_REPLICAS:-1}
+      resources:
+        limits:
+          memory: 512M
+
+  evocrm_crm_sidekiq:
+    image: evoapicloud/evo-ai-crm-community:1.0.0-rc7
+    entrypoint: ["/config/load-secrets.sh"]
+    command: ["/app/docker/entrypoints/rails.sh", "bundle", "exec", "sidekiq", "-C", "config/sidekiq.yml"]
+    healthcheck:
+      test: ["CMD-SHELL", "pgrep -f sidekiq || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
+    configs:
+      - source: evocrm_load_secrets_v2
+        target: /config/load-secrets.sh
+        mode: 0555
+    secrets:
+      - evocrm_db_password
+      - redis_password
+      - crm_secret_key_base
+      - crm_jwt_secret_key
+      - crm_evoai_crm_api_token
+      - crm_bot_runtime_secret
+    networks:
+      - internal_net
+    environment:
+      RAILS_ENV: production
+      POSTGRES_HOST: postvector
+      POSTGRES_PORT: 5432
+      POSTGRES_USERNAME: evocrm_app
+      POSTGRES_DATABASE: evo_community
+      POSTGRES_SSLMODE: disable
+      EVO_AUTH_SERVICE_URL: http://evocrm_auth:3001
+      EVO_AI_CORE_SERVICE_URL: http://evocrm_core:5555
+      BACKEND_URL: https://${CRM_API_DOMAIN:-crmapi.localhost}
+      FRONTEND_URL: https://${CRM_WEB_DOMAIN:-crm.localhost}
+      CORS_ORIGINS: https://${CRM_WEB_DOMAIN:-crm.localhost},https://${CRM_API_DOMAIN:-crmapi.localhost}
+      BOT_RUNTIME_URL: http://evocrm_bot_runtime:8080
+      BOT_RUNTIME_POSTBACK_BASE_URL: http://evocrm_crm:3000
+      ACTIVE_STORAGE_SERVICE: local
+      ACTIVE_STORAGE_URL: https://${CRM_API_DOMAIN:-crmapi.localhost}
+    volumes:
+      - evocrm_storage:/app/storage
+    deploy:
+      replicas: ${EVOCRM_REPLICAS:-1}
+      resources:
+        limits:
+          memory: 384M
+
+  # NOTA: evocrm_core e evocrm_bot_runtime NAO tem "command:" customizado no
+  # compose original do vendor - o ENTRYPOINT padrao da imagem (binario Go)
+  # e' desconhecido, e imagens Go minimalistas frequentemente nao tem shell
+  # (scratch/distroless), entao nao arriscamos encadear o wrapper de secrets
+  # nelas (poderia quebrar o boot silenciosamente). Os segredos destes dois
+  # servicos continuam como env var pura, igual ao compose original - mesmo
+  # nivel de exposicao de antes, nao piorou nem foi possivel melhorar sem
+  # validar contra a imagem real primeiro.
+  evocrm_core:
+    image: evoapicloud/evo-ai-core-service-community:1.0.0-rc7
+    networks:
+      - internal_net
+    environment:
+      - DB_HOST=postvector
+      - DB_PORT=5432
+      - DB_USER=evocrm_app
+      - DB_PASSWORD=${EVOCRM_DB_PASSWORD}
+      - DB_NAME=evo_community
+      - DB_SSLMODE=disable
+      - DB_MAX_IDLE_CONNS=10
+      - DB_MAX_OPEN_CONNS=100
+      - DB_CONN_MAX_LIFETIME=1h
+      - DB_CONN_MAX_IDLE_TIME=30m
+      - PORT=5555
+      - SECRET_KEY_BASE=${CRM_SECRET_KEY_BASE}
+      - JWT_SECRET_KEY=${CRM_JWT_SECRET_KEY}
+      - JWT_ALGORITHM=HS256
+      - ENCRYPTION_KEY=${CRM_ENCRYPTION_KEY}
+      - EVOLUTION_BASE_URL=http://evocrm_crm:3000
+      - EVO_AUTH_BASE_URL=http://evocrm_auth:3001
+      - AI_PROCESSOR_URL=http://evocrm_processor:8000
+      - AI_PROCESSOR_VERSION=v1
+    deploy:
+      replicas: ${EVOCRM_REPLICAS:-1}
+      resources:
+        limits:
+          memory: 128M
+
+  evocrm_processor:
+    image: evoapicloud/evo-ai-processor-community:1.0.0-rc7
+    command: ["/config/load-secrets.sh", "sh", "-c", "alembic upgrade head && python -m scripts.run_seeders && uvicorn src.main:app --host $$HOST --port $$PORT"]
+    configs:
+      - source: evocrm_load_secrets_v2
+        target: /config/load-secrets.sh
+        mode: 0555
+    secrets:
+      - evocrm_db_password
+      - redis_password
+      - crm_secret_key_base
+      - crm_encryption_key
+      - crm_evoai_crm_api_token
+    volumes:
+      - evocrm_processor_logs:/app/logs
+    networks:
+      - internal_net
+    environment:
+      REDIS_HOST: redis
+      REDIS_PORT: 6379
+      REDIS_SSL: "false"
+      REDIS_DB: 1
+      REDIS_KEY_PREFIX: a2a_
+      REDIS_TTL: 3600
+      HOST: 0.0.0.0
+      PORT: 8000
+      DEBUG: "false"
+      EVO_AUTH_BASE_URL: http://evocrm_auth:3001
+      EVO_AI_CRM_URL: http://evocrm_crm:3000
+      CORE_SERVICE_URL: http://evocrm_core:5555/api/v1
+      APP_URL: https://${CRM_API_DOMAIN:-crmapi.localhost}
+      API_URL: https://${CRM_API_DOMAIN:-crmapi.localhost}
+      API_TITLE: Agent Processor Community
+      API_DESCRIPTION: Agent Processor Community for Evo AI
+      API_VERSION: 1.0.0
+      ORGANIZATION_NAME: Evo CRM
+      TOOLS_CACHE_ENABLED: "true"
+      TOOLS_CACHE_TTL: 3600
+    deploy:
+      replicas: ${EVOCRM_REPLICAS:-1}
+      resources:
+        limits:
+          memory: 512M
+
+  evocrm_bot_runtime:
+    image: evoapicloud/evo-bot-runtime:1.0.0-rc7
+    networks:
+      - internal_net
+    environment:
+      - LISTEN_ADDR=0.0.0.0:8080
+      - REDIS_URL=redis://:${REDIS_PASSWORD}@redis:6379/1
+      - AI_PROCESSOR_URL=http://evocrm_processor:8000
+      - BOT_RUNTIME_SECRET=${CRM_BOT_RUNTIME_SECRET}
+      - AI_CALL_TIMEOUT_SECONDS=30
+    deploy:
+      replicas: ${EVOCRM_REPLICAS:-1}
+      resources:
+        limits:
+          memory: 128M
+
+  evocrm_frontend:
+    image: evoapicloud/evo-ai-frontend-community:1.0.0-rc7
+    networks:
+      - public_net
+    environment:
+      - VITE_APP_ENV=production
+      - VITE_API_URL=https://${CRM_API_DOMAIN:-crmapi.localhost}
+      - VITE_AUTH_API_URL=https://${CRM_API_DOMAIN:-crmapi.localhost}
+      - VITE_EVOAI_API_URL=https://${CRM_API_DOMAIN:-crmapi.localhost}
+      - VITE_AGENT_PROCESSOR_URL=https://${CRM_API_DOMAIN:-crmapi.localhost}
+      - VITE_WS_URL=https://${CRM_API_DOMAIN:-crmapi.localhost}
+    deploy:
+      replicas: ${EVOCRM_REPLICAS:-1}
+      labels:
+        - "traefik.enable=true"
+        - "traefik.http.routers.evocrm_frontend.rule=Host(`${CRM_WEB_DOMAIN:-crm.localhost}`)"
+        - "traefik.http.routers.evocrm_frontend.entrypoints=websecure"
+        - "traefik.http.routers.evocrm_frontend.tls.certresolver=letsencryptresolver"
+        - "traefik.http.services.evocrm_frontend.loadbalancer.server.port=80"
+        - "traefik.http.services.evocrm_frontend.loadbalancer.passHostHeader=true"
+      resources:
+        limits:
+          memory: 96M
+
+networks:
+  public_net:
+    external: true
+  internal_net:
+    external: true
+
+configs:
+  evocrm_load_secrets_v2:
+    file: ./evocrm-load-secrets.sh
+
+secrets:
+  evocrm_db_password:
+    external: true
+    name: ${EVOCRM_DB_PASSWORD_SECRET:-evocrm_db_password_v1}
+  redis_password:
+    external: true
+    name: ${REDIS_PASSWORD_SECRET:-redis_password_v1}
+  crm_secret_key_base:
+    external: true
+    name: ${CRM_SECRET_KEY_BASE_SECRET:-crm_secret_key_base_v1}
+  crm_jwt_secret_key:
+    external: true
+    name: ${CRM_JWT_SECRET_KEY_SECRET:-crm_jwt_secret_key_v1}
+  crm_doorkeeper_jwt_secret_key:
+    external: true
+    name: ${CRM_DOORKEEPER_JWT_SECRET_KEY_SECRET:-crm_doorkeeper_jwt_secret_key_v1}
+  crm_encryption_key:
+    external: true
+    name: ${CRM_ENCRYPTION_KEY_SECRET:-crm_encryption_key_v1}
+  crm_evoai_crm_api_token:
+    external: true
+    name: ${CRM_EVOAI_CRM_API_TOKEN_SECRET:-crm_evoai_crm_api_token_v1}
+  crm_bot_runtime_secret:
+    external: true
+    name: ${CRM_BOT_RUNTIME_SECRET_SECRET:-crm_bot_runtime_secret_v1}
+
+volumes:
+  evocrm_processor_logs:
+  evocrm_storage:
+  evoauth_storage:

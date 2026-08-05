@@ -1,0 +1,85 @@
+pipeline {
+    agent any
+
+    environment {
+        APP_NAME = 'api-nestjs'
+        IMAGE_TAG = "${env.BUILD_NUMBER}"
+        DEPLOY_ROOT = "${env.VPS_DEPLOY_ROOT ?: '/opt/vps-deploy'}"
+    }
+
+    stages {
+        stage('1. Checkout Codigo') {
+            steps {
+                checkout scm
+            }
+        }
+
+        stage('2. Gerar & Injetar Variaveis (.env)') {
+            steps {
+                script {
+                    def envFile = "${DEPLOY_ROOT}/setup/env/apps/${APP_NAME}.env"
+                    def envExample = "${DEPLOY_ROOT}/setup/env/apps/${APP_NAME}.env.example"
+                    def setupScript = "${DEPLOY_ROOT}/setup/scripts/manage-env.js"
+
+                    sh "node '${setupScript}' '${envFile}' '${envExample}'"
+                    sh "cp '${envFile}' .env"
+                }
+            }
+        }
+
+        stage('3. Build da Imagem Docker') {
+            steps {
+                sh "docker build -t ${APP_NAME}:${IMAGE_TAG} -t ${APP_NAME}:latest ."
+            }
+        }
+
+        stage('4. Deploy / Atualizacao no Swarm') {
+            steps {
+                script {
+                    // Nome real do servico no Swarm e' "<stack>_<service>" -
+                    // apps-stack.yml define o servico "api-nestjs"/"web-vite"
+                    // dentro da stack "apps", entao o nome fica "apps_api-nestjs"
+                    // etc. (nao "${APP_NAME}_service", que nunca existiu de verdade).
+                    def serviceExists = sh(script: "docker service inspect apps_${APP_NAME} >/dev/null 2>&1", returnStatus: true) == 0
+                    if (serviceExists) {
+                        sh "docker service update --image ${APP_NAME}:${IMAGE_TAG} apps_${APP_NAME}"
+                    } else {
+                        // Primeiro deploy: o servico ainda nao existe - sobe a
+                        // stack inteira. apps-stack.yml usa "${APP_NAME}:latest"
+                        // como imagem default, que a stage 3 acabou de buildar.
+                        sh """
+                            set -a; . '${DEPLOY_ROOT}/.env'; set +a
+                            docker stack deploy -c '${DEPLOY_ROOT}/setup/docker/apps-stack.yml' apps
+                        """
+                    }
+                }
+            }
+        }
+
+        stage('5. Testes E2E (QA Pipeline)') {
+            steps {
+                script {
+                    def qaDir = "${DEPLOY_ROOT}/apps/qa-test-automation-pipeline"
+                    def exists = sh(script: "test -f '${qaDir}/package.json'", returnStatus: true) == 0
+                    if (exists) {
+                        catchError(buildResult: 'UNSTABLE', stageResult: 'FAILURE') {
+                            sh "npm --prefix '${qaDir}' test"
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    post {
+        always {
+            sh "docker image prune -f --filter 'until=24h'"
+        }
+        success {
+            echo "Build e Deploy do ${APP_NAME} realizados com sucesso."
+        }
+        failure {
+            echo "Erro durante o Build/Deploy do ${APP_NAME}."
+        }
+    }
+}

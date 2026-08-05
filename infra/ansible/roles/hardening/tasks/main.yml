@@ -1,0 +1,14 @@
+---
+# Reaproveita setup/security/harden-vps.sh (ja idempotente e revisado na
+# Fase 1/2 de seguranca) em vez de reescrever UFW/fail2ban/sysctl/DOCKER-USER
+# como tasks nativas - reduz superficie de codigo novo e nao testado.
+- name: Executar harden-vps.sh (UFW, fail2ban, sysctl, chain DOCKER-USER)
+  ansible.builtin.command:
+    cmd: bash setup/security/harden-vps.sh
+    chdir: "{{ deploy_root }}"
+  changed_when: true
+  register: harden_result
+
+- name: Mostrar resumo do hardening
+  ansible.builtin.debug:
+    msg: "{{ harden_result.stdout_lines[-6:] }}"

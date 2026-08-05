@@ -1,0 +1,85 @@
+name: Infra Lint (Terraform + Ansible + Secrets)
+
+on:
+  pull_request:
+    paths:
+      - "infra/**"
+      - "setup/**"
+      - ".github/workflows/infra-lint.yml"
+  push:
+    branches: [main]
+    paths:
+      - "infra/**"
+      - "setup/**"
+
+jobs:
+  terraform:
+    name: Terraform fmt/validate/tflint
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_wrapper: false
+
+      - name: terraform fmt -check
+        run: terraform fmt -check -recursive infra/terraform
+
+      - name: terraform validate (module)
+        working-directory: infra/terraform/modules/vps-client
+        run: |
+          terraform init -backend=false
+          terraform validate
+
+      - name: terraform validate (client template)
+        working-directory: infra/terraform/clients/_template
+        run: |
+          terraform init -backend=false
+          terraform validate
+
+      - uses: terraform-linters/setup-tflint@v4
+      - name: tflint
+        working-directory: infra/terraform
+        run: |
+          tflint --init
+          tflint --recursive
+
+  checkov:
+    name: Checkov (Terraform security scan)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: bridgecrewio/checkov-action@v12
+        with:
+          directory: infra/terraform
+          framework: terraform
+          soft_fail: true # comece permissivo; apertar depois de zerar o backlog de findings
+
+  ansible-lint:
+    name: ansible-lint
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install ansible ansible-lint
+      - run: ansible-galaxy collection install -r infra/ansible/requirements.yml
+      - name: ansible-playbook --syntax-check
+        working-directory: infra/ansible
+        run: ansible-playbook site.yml --syntax-check
+      - name: ansible-lint
+        working-directory: infra/ansible
+        run: ansible-lint site.yml roles/
+
+  gitleaks:
+    name: gitleaks (nunca deixar segredo entrar no Git)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: gitleaks/gitleaks-action@v2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

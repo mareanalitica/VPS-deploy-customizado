@@ -1,0 +1,14 @@
+---
+hostinger_api_base: "https://developers.hostinger.com"
+
+# Corpo da requisicao confirmado contra a API real (nao mais melhor-esforco):
+#   PUT .../firewall/{id}/rules  espera {"rules": [...]}, cada item com
+#   protocol/port/source/source_detail. "source" so' aceita "any" ou
+#   "custom" (confirmado testando manualmente e comparando com uma regra
+#   criada pela propria UI do hPanel); com "custom", "source_detail" precisa
+#   ser o IP puro, SEM sufixo "/32" (a role ja remove isso - ver
+#   tasks/main.yml). A resposta tambem inclui um campo "action" (default
+#   "accept") que nao enviamos explicitamente.
+hostinger_firewall_protocol: "TCP"
+hostinger_firewall_source_open: "any"        # usado nas regras 80/443 (publico)
+hostinger_firewall_source_restricted: "custom"   # usado na regra 22 (admin_allowed_cidrs)

@@ -1,0 +1,30 @@
+---
+# Reaproveita setup/scripts/deploy.sh de proposito (ja cria os Docker Secrets
+# a partir do .env, builda a imagem custom do Jenkins e roda o stack deploy -
+# ver Fase 1 da auditoria de seguranca). Reimplementar essa sequencia como
+# tasks nativas do Ansible duplicaria a mesma logica em dois lugares.
+- name: Rodar deploy.sh (secrets + build da imagem Jenkins + stack deploy)
+  ansible.builtin.command:
+    cmd: bash setup/scripts/deploy.sh
+    chdir: "{{ deploy_root }}"
+  # deploy.sh faz "set -a; . ./.env" internamente, entao os valores ja
+  # gravados no .env pela role "secrets" (incluindo DOMAIN_NAME) sao a
+  # unica fonte de verdade aqui - nao ha necessidade de repassar env vars.
+  register: deploy_result
+  changed_when: true
+
+- name: Mostrar resumo do deploy
+  ansible.builtin.debug:
+    msg: "{{ deploy_result.stdout_lines[-8:] }}"
+
+- name: Aguardar o container do Traefik ficar 'healthy'
+  # Porta 8080 (ping/API) do Traefik nao e' publicada no host - so o
+  # HEALTHCHECK do proprio container a alcanca. Checamos o status reportado
+  # pelo Docker em vez de tentar um HTTP request pela rede.
+  ansible.builtin.shell: >-
+    docker ps --filter "name=infra_traefik" --format "{{ '{{.Status}}' }}"
+  register: traefik_status
+  until: "'healthy' in traefik_status.stdout"
+  retries: 20
+  delay: 5
+  changed_when: false

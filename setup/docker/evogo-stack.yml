@@ -1,0 +1,57 @@
+version: '3.8'
+
+# =============================================================================
+# Stack do Evolution Go (EvoGo) - gateway WhatsApp da mesma familia de
+# produto do EvoCRM (Evolution Foundation). Doc oficial:
+# https://docs.evolutionfoundation.com.br/evolution-go/installation.md
+#
+# Requer: stack "infra" ja implantada, e setup/scripts/bootstrap-app-databases.sh
+# ja rodado (cria o role "evogo_app" e os bancos "evogo_auth"/"evogo_users").
+#
+# NOTA: nao ha "command:" customizado documentado para esta imagem, entao
+# (mesmo raciocinio de evocrm_core/evocrm_bot_runtime) nao arriscamos
+# encadear o wrapper de Docker Swarm Secrets - GLOBAL_API_KEY e a senha do
+# Postgres embutida na connection string ficam como env var pura (visivel
+# via "docker inspect"), nao um Docker Secret. Documentado, nao escondido.
+#
+# Imagem em ":latest" (sem pin de versao nenhum) - risco maior ainda que o
+# "1.0.0-rc7" do EvoCRM; fixar uma tag real antes de qualquer uso alem de demo.
+# =============================================================================
+
+services:
+  evogo:
+    image: ${EVOGO_IMAGE:-evoapicloud/evolution-go:latest}
+    networks:
+      - public_net
+      - internal_net
+    environment:
+      GLOBAL_API_KEY: ${EVOGO_GLOBAL_API_KEY}
+      POSTGRES_AUTH_DB: postgresql://evogo_app:${EVOGO_DB_PASSWORD}@postvector:5432/evogo_auth?sslmode=disable
+      POSTGRES_USERS_DB: postgresql://evogo_app:${EVOGO_DB_PASSWORD}@postvector:5432/evogo_users?sslmode=disable
+      SERVER_PORT: 8080
+      CLIENT_NAME: ${CLIENT_NAME:-evolution}
+      # Documentadas como "com default" mas o binario rejeitava o boot com
+      # "[ERR] [CONFIG] required configuration variable is missing" ate estas
+      # 3 serem setadas explicitamente - o proprio .env de referencia do
+      # vendor (docs/evolution-go/installation.md) sempre as inclui, apesar
+      # do default documentado. Mesmos valores do exemplo oficial.
+      DATABASE_SAVE_MESSAGES: "false"
+      WADEBUG: INFO
+      LOGTYPE: console
+    deploy:
+      replicas: ${EVOGO_REPLICAS:-1}
+      labels:
+        - "traefik.enable=true"
+        - "traefik.http.routers.evogo.rule=Host(`${EVOGO_DOMAIN:-evogo.localhost}`)"
+        - "traefik.http.routers.evogo.entrypoints=websecure"
+        - "traefik.http.routers.evogo.tls.certresolver=letsencryptresolver"
+        - "traefik.http.services.evogo.loadbalancer.server.port=8080"
+      resources:
+        limits:
+          memory: 256M
+
+networks:
+  public_net:
+    external: true
+  internal_net:
+    external: true

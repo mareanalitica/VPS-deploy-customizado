@@ -1,0 +1,15 @@
+client_name = "acme"
+
+# Descubra os 3 valores abaixo rodando (uma vez, com HOSTINGER_API_TOKEN
+# exportado):
+#   terraform init
+#   terraform console
+#   > data.hostinger_vps_plans.all.plans
+#   > data.hostinger_vps_data_centers.all.data_centers
+#   > data.hostinger_vps_templates.all.templates
+plan_id          = "hostingercom-vps-kvm2-usd-1m"
+data_center_city = "Sao Paulo"
+template_name    = "Ubuntu 24.04 LTS"
+
+# Conteudo (nao caminho) da chave publica SSH que tera acesso root a VPS.
+ssh_public_key = "ssh-ed25519 AAAA... deploy@acme"
