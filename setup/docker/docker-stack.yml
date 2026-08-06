@@ -2,12 +2,11 @@ version: '3.8'
 
 services:
   # ==========================================
-  # 1. PROXY REVERSO & SSL (Traefik com Let's Encrypt)
+  # 1. PROXY REVERSO & SSL (Traefik + Let's Encrypt)
   # ==========================================
   traefik:
-    image: traefik:v2.10
+    image: ${TRAEFIK_IMAGE:-traefik:v2.10}
     command:
-      - "--api.insecure=true"
       - "--providers.docker=true"
       - "--providers.docker.swarmMode=true"
       - "--providers.docker.exposedbydefault=false"
@@ -19,27 +18,41 @@ services:
       - "--certificatesresolvers.letsencryptresolver.acme.httpchallenge.entrypoint=web"
       - "--certificatesresolvers.letsencryptresolver.acme.email=${TRAEFIK_ACME_EMAIL:-admin@localhost}"
       - "--certificatesresolvers.letsencryptresolver.acme.storage=/letsencrypt/acme.json"
+      - "--ping=true"
     ports:
       - "80:80"
       - "443:443"
-      - "8082:8080" # Traefik Dashboard
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock:ro
       - traefik_certificates:/letsencrypt
     networks:
       - public_net
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q --spider http://localhost:8080/ping || exit 1"]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+    deploy:
+      resources:
+        limits:
+          memory: 128M
 
   # ==========================================
-  # 2. GESTÃO DE CONTAINERS (Portainer)
+  # 2. GESTAO DE CONTAINERS (Portainer)
   # ==========================================
   portainer:
-    image: portainer/portainer-ce:latest
+    image: ${PORTAINER_IMAGE:-portainer/portainer-ce:2}
     command: -H unix:///var/run/docker.sock
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
       - portainer_data:/data
     networks:
       - public_net
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q --spider http://localhost:9000 || exit 1"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
     deploy:
       labels:
         - "traefik.enable=true"
@@ -47,22 +60,35 @@ services:
         - "traefik.http.routers.portainer.entrypoints=websecure"
         - "traefik.http.routers.portainer.tls.certresolver=letsencryptresolver"
         - "traefik.http.services.portainer.loadbalancer.server.port=9000"
+      resources:
+        limits:
+          memory: 256M
 
   # ==========================================
   # 3. CI/CD & BUILDS LOCAIS (Jenkins)
   # ==========================================
   jenkins:
-    image: jenkins/jenkins:lts-jdk17
+    image: ${JENKINS_IMAGE:-jenkins/jenkins:lts-jdk17}
     user: root
-    ports:
-      - "${JENKINS_PORT:-8080}:8080"
-      - "50000:50000"
+    environment:
+      JENKINS_ADMIN_ID: ${JENKINS_ADMIN_USER:-admin}
+      JENKINS_ADMIN_PASSWORD: ${JENKINS_ADMIN_PASSWORD}
+      JAVA_OPTS: "-Djenkins.install.runSetupWizard=false"
     volumes:
       - jenkins_data:/var/jenkins_home
       - /var/run/docker.sock:/var/run/docker.sock
+    configs:
+      - source: jenkins_init
+        target: /usr/share/jenkins/ref/init.groovy.d/init-admin.groovy
     networks:
       - public_net
       - internal_net
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q --spider http://localhost:8080/login || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 60s
     deploy:
       labels:
         - "traefik.enable=true"
@@ -70,12 +96,15 @@ services:
         - "traefik.http.routers.jenkins.entrypoints=websecure"
         - "traefik.http.routers.jenkins.tls.certresolver=letsencryptresolver"
         - "traefik.http.services.jenkins.loadbalancer.server.port=8080"
+      resources:
+        limits:
+          memory: 768M
 
   # ==========================================
   # 4. BANCOS DE DADOS & CACHE
   # ==========================================
   mongodb:
-    image: mongo:latest
+    image: ${MONGO_IMAGE:-mongo:7}
     environment:
       MONGO_INITDB_ROOT_USERNAME: ${MONGO_INITDB_ROOT_USERNAME:-root}
       MONGO_INITDB_ROOT_PASSWORD: ${MONGO_INITDB_ROOT_PASSWORD}
@@ -83,17 +112,38 @@ services:
       - mongo_data:/data/db
     networks:
       - internal_net
+    healthcheck:
+      test: ["CMD", "mongosh", "--quiet", "--eval", "db.adminCommand('ping')"]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+      start_period: 30s
+    deploy:
+      resources:
+        limits:
+          memory: 512M
 
   redis:
-    image: redis:7-alpine
+    image: ${REDIS_IMAGE:-redis:7-alpine}
     command: redis-server --requirepass ${REDIS_PASSWORD}
+    environment:
+      REDIS_PASSWORD: ${REDIS_PASSWORD}
     volumes:
       - redis_data:/data
     networks:
       - internal_net
+    healthcheck:
+      test: ["CMD-SHELL", "redis-cli -a $$REDIS_PASSWORD --no-auth-warning ping | grep PONG"]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+    deploy:
+      resources:
+        limits:
+          memory: 128M
 
   postvector:
-    image: pgvector/pgvector:pg16
+    image: ${POSTVECTOR_IMAGE:-pgvector/pgvector:pg16}
     environment:
       POSTGRES_USER: ${POSTGRES_USER:-postgres}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
@@ -102,43 +152,84 @@ services:
       - postgres_data:/var/lib/postgresql/data
     networks:
       - internal_net
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $$POSTGRES_USER"]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+      start_period: 30s
+    deploy:
+      resources:
+        limits:
+          memory: 512M
 
   # ==========================================
   # 5. MESSAGING & STORAGE
   # ==========================================
   rabbitmq:
-    image: rabbitmq:3-management-alpine
+    image: ${RABBITMQ_IMAGE:-rabbitmq:3-management-alpine}
     environment:
       RABBITMQ_DEFAULT_USER: ${RABBITMQ_DEFAULT_USER:-admin}
       RABBITMQ_DEFAULT_PASS: ${RABBITMQ_DEFAULT_PASS}
-    ports:
-      - "${RABBITMQ_MANAGEMENT_PORT:-15672}:15672"
     volumes:
       - rabbitmq_data:/var/lib/rabbitmq
     networks:
       - internal_net
       - public_net
+    healthcheck:
+      test: ["CMD-SHELL", "rabbitmq-diagnostics -q ping"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
+    deploy:
+      labels:
+        - "traefik.enable=true"
+        - "traefik.http.routers.rabbitmq.rule=Host(`rabbitmq.${DOMAIN_NAME:-localhost}`)"
+        - "traefik.http.routers.rabbitmq.entrypoints=websecure"
+        - "traefik.http.routers.rabbitmq.tls.certresolver=letsencryptresolver"
+        - "traefik.http.services.rabbitmq.loadbalancer.server.port=15672"
+      resources:
+        limits:
+          memory: 256M
 
   minio:
-    image: minio/minio:latest
+    image: ${MINIO_IMAGE:-minio/minio:latest}
     command: server /data --console-address ":9001"
     environment:
       MINIO_ROOT_USER: ${MINIO_ROOT_USER:-minioadmin}
       MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD}
-    ports:
-      - "${MINIO_PORT:-9000}:9000"
-      - "${MINIO_CONSOLE_PORT:-9001}:9001"
     volumes:
       - minio_data:/data
     networks:
-      - public_net
       - internal_net
+      - public_net
+    healthcheck:
+      test: ["CMD", "curl", "-sf", "http://localhost:9000/minio/health/live"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 15s
+    deploy:
+      labels:
+        - "traefik.enable=true"
+        - "traefik.http.routers.minio-console.rule=Host(`minio.${DOMAIN_NAME:-localhost}`)"
+        - "traefik.http.routers.minio-console.entrypoints=websecure"
+        - "traefik.http.routers.minio-console.tls.certresolver=letsencryptresolver"
+        - "traefik.http.services.minio-console.loadbalancer.server.port=9001"
+        - "traefik.http.routers.minio-api.rule=Host(`s3.${DOMAIN_NAME:-localhost}`)"
+        - "traefik.http.routers.minio-api.entrypoints=websecure"
+        - "traefik.http.routers.minio-api.tls.certresolver=letsencryptresolver"
+        - "traefik.http.services.minio-api.loadbalancer.server.port=9000"
+      resources:
+        limits:
+          memory: 256M
 
   # ==========================================
-  # 6. AUTOMAÇÃO DE WORKFLOWS (n8n)
+  # 6. AUTOMACAO DE WORKFLOWS (n8n)
   # ==========================================
   n8n:
-    image: n8nio/n8n:latest
+    image: ${N8N_IMAGE:-n8nio/n8n:1}
     environment:
       - N8N_ENCRYPTION_KEY=${N8N_ENCRYPTION_KEY}
       - N8N_PORT=5678
@@ -147,6 +238,12 @@ services:
     networks:
       - public_net
       - internal_net
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q --spider http://localhost:5678/healthz || exit 1"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 15s
     deploy:
       labels:
         - "traefik.enable=true"
@@ -154,22 +251,31 @@ services:
         - "traefik.http.routers.n8n.entrypoints=websecure"
         - "traefik.http.routers.n8n.tls.certresolver=letsencryptresolver"
         - "traefik.http.services.n8n.loadbalancer.server.port=5678"
+      resources:
+        limits:
+          memory: 512M
 
   # ==========================================
-  # 7. AUTOMATION & TESTES E2E (Chromium Headless)
+  # 7. AUTOMACAO & TESTES E2E (Chromium Headless)
   # ==========================================
   chromium-automation:
-    image: zenika/alpine-chrome:latest
+    image: ${CHROMIUM_IMAGE:-zenika/alpine-chrome:latest}
     command: [
       "--no-sandbox",
       "--disable-gpu",
       "--remote-debugging-address=0.0.0.0",
       "--remote-debugging-port=9222"
     ]
-    ports:
-      - "9222:9222"
     networks:
       - internal_net
+    deploy:
+      resources:
+        limits:
+          memory: 512M
+
+configs:
+  jenkins_init:
+    file: ../jenkins/init-admin.groovy
 
 networks:
   public_net:
@@ -177,6 +283,9 @@ networks:
     external: true
   internal_net:
     driver: overlay
+    internal: true
+    driver_opts:
+      encrypted: "true"
 
 volumes:
   traefik_certificates:

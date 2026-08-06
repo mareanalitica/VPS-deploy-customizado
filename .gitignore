@@ -1,4 +1,6 @@
 .env
+setup/env/apps/*.env
+!setup/env/apps/*.env.example
 
 backups
 

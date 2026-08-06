@@ -3,28 +3,39 @@ set -e
 
 echo "🚀 [VPS Deploy] Iniciando setup da infraestrutura..."
 
-# 1. Gerar / Gerenciar arquivo .env e credenciais
-if command -v node >/dev/null 2>&1; then
-    node setup/scripts/manage-env.js
-else
-    echo "⚠️ Node.js não instalado localmente. Certifique-se de que o .env está preenchido."
+# 1. Instalar Docker se nao estiver presente
+if ! command -v docker &>/dev/null; then
+    echo "🐋 Docker nao encontrado. Instalando via get.docker.com..."
+    curl -fsSL https://get.docker.com | sh
+    systemctl enable docker
+    systemctl start docker
+    echo "✅ Docker instalado com sucesso."
 fi
 
-# 2. Inicializar Docker Swarm se não estiver ativo
+# 2. Instalar Node.js se nao estiver presente (necessario para manage-env.js)
+if ! command -v node &>/dev/null; then
+    echo "📦 Node.js nao encontrado. Instalando via NodeSource (v22 LTS)..."
+    curl -fsSL https://deb.nodesource.com/setup_22.x | bash -
+    apt-get install -y nodejs
+    echo "✅ Node.js instalado com sucesso."
+fi
+
+# 3. Gerar / Gerenciar arquivo .env e credenciais
+node setup/scripts/manage-env.js
+
+# 4. Inicializar Docker Swarm se nao estiver ativo
 if ! docker info 2>/dev/null | grep -q "Swarm: active"; then
     echo "🐋 Inicializando Docker Swarm..."
     docker swarm init || true
 else
-    echo "✅ Docker Swarm já está ativo."
+    echo "✅ Docker Swarm ja esta ativo."
 fi
 
-# 3. Criar rede overlay pública
+# 5. Criar rede overlay publica
 echo "🌐 Criando rede overlay 'public_net'..."
 docker network create --driver overlay public_net 2>/dev/null || true
 
-# 4. Imprimir instrução final
 echo ""
-echo "🎉 Setup concluído com sucesso!"
-echo "Para subir os serviços da infraestrutura, execute:"
-echo "   docker stack deploy -c setup/docker/docker-stack.yml infra"
+echo "🎉 Setup concluido! Para implantar a infra, execute:"
+echo "   npm run deploy:infra"
 echo ""
