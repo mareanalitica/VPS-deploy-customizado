@@ -1,5 +1,9 @@
 # ADR 0001: Choosing Docker Swarm over Kubernetes for Low-Cost MVP Infrastructure
 
+[![Language: English](https://img.shields.io/badge/Language-English-blue.svg)](./0001-why-docker-swarm-over-k8s.md)
+[![Idioma: Português](https://img.shields.io/badge/Idioma-Portugu%C3%Aas-green.svg)](./0001-why-docker-swarm-over-k8s_PT.md)
+[![Idioma: Español](https://img.shields.io/badge/Idioma-Espa%C3%B1ol-yellow.svg)](./0001-why-docker-swarm-over-k8s_ES.md)
+
 * **Status:** Accepted
 * **Deciders:** System Architect / Engineering Lead
 * **Date:** 2026-08-05

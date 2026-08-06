@@ -4,6 +4,14 @@ Seja bem-vindo à central de documentação da **Base VPS Deploy & MVP Multi-App
 
 ---
 
+## 🗂️ Suporte Multilíngue (Multilingual Support)
+
+* 🇺🇸 **[English Documentation](./README.md)**
+* 🇧🇷 **[Documentação em Português](./README_PT.md)**
+* 🇪🇸 **[Documentación en Español](./README_ES.md)**
+
+---
+
 ## 🧭 Índice por Área & Contexto
 
 ### 1. 💡 Soluções por Nicho & Integração com BaaS (`docs/niches/`)
@@ -21,5 +29,7 @@ Seja bem-vindo à central de documentação da **Base VPS Deploy & MVP Multi-App
 * 📶 **[Arquitetura PWA Offline-First](./applications/pwa-offline-first.md)** — Estratégias de cache offline e sincronização em segundo plano.
 * 🧪 **[Automação de QA & Chromium](./applications/qa-automation.md)** — Suíte Playwright E2E consumindo o container Chromium.
 
-### 5. 🧠 Decisão Arquitetural (`docs/adr/`)
-* 📄 **[ADR 0001: Docker Swarm vs Kubernetes](./adr/0001-why-docker-swarm-over-k8s.md)** — Análise de custos e complexidade operacional.
+### 5. 🧠 Decisões Arquiteturais (`docs/adr/`)
+* 📄 **[ADR 0001: Docker Swarm vs Kubernetes](./adr/0001-why-docker-swarm-over-k8s_PT.md)** — Análise de custos e complexidade operacional.
+* 📄 **[ADR 0002: CI/CD em Nuvem vs VPS como Gateway de Orquestração](./adr/0002-cloud-ci-cd-vs-vps-orchestration-gateway_PT.md)** — Análise de DX, custos de GitHub Actions e papel da VPS como gateway de runtime.
+* 📄 **[ADR 0003: Limites da VPS & Segregação para Serviços Gerenciados](./adr/0003-vps-capacity-limits-and-managed-service-migration-thresholds_PT.md)** — Métricas de MAU/CCU e gatilhos para migração gradual para S3, RDS e Atlas.

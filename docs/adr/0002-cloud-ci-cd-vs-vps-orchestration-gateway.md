@@ -1,5 +1,9 @@
 # ADR 0002: Managed CI/CD (GitHub Actions) vs. Self-Hosted Jenkins & VPS as Orchestration Gateway
 
+[![Language: English](https://img.shields.io/badge/Language-English-blue.svg)](./0002-cloud-ci-cd-vs-vps-orchestration-gateway.md)
+[![Idioma: Português](https://img.shields.io/badge/Idioma-Portugu%C3%Aas-green.svg)](./0002-cloud-ci-cd-vs-vps-orchestration-gateway_PT.md)
+[![Idioma: Español](https://img.shields.io/badge/Idioma-Espa%C3%B1ol-yellow.svg)](./0002-cloud-ci-cd-vs-vps-orchestration-gateway_ES.md)
+
 * **Status:** Accepted
 * **Deciders:** System Architect / DevOps Lead
 * **Date:** 2026-08-06
@@ -71,18 +75,18 @@ Under the recommended hybrid model, the VPS responsibility shifts from a build s
 
 ```mermaid
 flowchart LR
-    subgraph GitHub Cloud
-        Developer[Developer / git push] --> PR[GitHub PR / Actions]
-        PR -->|Build & Test| GHA[GitHub Actions Runner]
-        GHA -->|Push Image| GHCR[GitHub Container Registry]
+    subgraph GH ["GitHub Cloud"]
+        Developer["Developer / git push"] --> PR["GitHub PR / Actions"]
+        PR -->|"Build & Test"| GHA["GitHub Actions Runner"]
+        GHA -->|"Push Image"| GHCR["GitHub Container Registry"]
     end
 
-    subgraph VPS Orchestration Gateway
-        GHCR -->|Trigger Deploy Webhook / SSH| Gateway[Traefik / Swarm Gateway]
-        Gateway -->|Zero Downtime Rollout| Swarm[Docker Swarm Services]
-        Swarm --> API[NestJS API]
-        Swarm --> Web[Vite PWA]
-        Swarm --> DB[(Postgres / Mongo / Redis)]
+    subgraph VPS ["VPS Orchestration Gateway"]
+        GHCR -->|"Trigger Deploy Webhook / SSH"| Gateway["Traefik / Swarm Gateway"]
+        Gateway -->|"Zero Downtime Rollout"| Swarm["Docker Swarm Services"]
+        Swarm --> API["NestJS API"]
+        Swarm --> Web["Vite PWA"]
+        Swarm --> DB[("Postgres / Mongo / Redis")]
     end
 ```
 

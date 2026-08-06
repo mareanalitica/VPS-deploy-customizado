@@ -1,5 +1,9 @@
 # ADR 0003: VPS Capacity Thresholds & Gradual Service Migration to Managed Cloud (S3, Managed DBs)
 
+[![Language: English](https://img.shields.io/badge/Language-English-blue.svg)](./0003-vps-capacity-limits-and-managed-service-migration-thresholds.md)
+[![Idioma: Português](https://img.shields.io/badge/Idioma-Portugu%C3%Aas-green.svg)](./0003-vps-capacity-limits-and-managed-service-migration-thresholds_PT.md)
+[![Idioma: Español](https://img.shields.io/badge/Idioma-Espa%C3%B1ol-yellow.svg)](./0003-vps-capacity-limits-and-managed-service-migration-thresholds_ES.md)
+
 * **Status:** Accepted
 * **Deciders:** System Architect / Lead DevOps Engineer / Engineering Manager
 * **Date:** 2026-08-06
@@ -33,27 +37,27 @@ This ADR establishes concrete, metrics-driven operational thresholds to define *
 
 ```mermaid
 flowchart TD
-    subgraph Phase 1: Monolithic VPS [100 - 10,000 MAU]
-        VPS1[Single VPS Node - 4GB RAM]
-        VPS1 -->|Runs All Containers| C1[Traefik + APIs + Postgres + Mongo + Redis + MinIO]
+    subgraph P1 ["Phase 1: Monolithic VPS (100 - 10,000 MAU)"]
+        VPS1["Single VPS Node (4GB RAM)"]
+        VPS1 -->|"Runs All Containers"| C1["Traefik + APIs + Postgres + Mongo + Redis + MinIO"]
     end
 
-    subgraph Phase 2: Storage Offload [10,000 - 50,000 MAU]
-        VPS2[VPS Node - 4GB to 8GB RAM]
-        VPS2 -->|Runs Core Stack| C2[Traefik + APIs + Postgres + Mongo + Redis]
-        VPS2 -.->|Offload Media Uploads| R2[Cloudflare R2 / AWS S3]
+    subgraph P2 ["Phase 2: Storage Offload (10,000 - 50,000 MAU)"]
+        VPS2["VPS Node (4GB to 8GB RAM)"]
+        VPS2 -->|"Runs Core Stack"| C2["Traefik + APIs + Postgres + Mongo + Redis"]
+        VPS2 -.->|"Offload Media Uploads"| R2["Cloudflare R2 / AWS S3"]
     end
 
-    subgraph Phase 3: DB Segregation [50,000 - 200,000+ MAU]
-        VPS3[VPS Orchestration Node - 8GB RAM]
-        VPS3 -->|Runs App Tier| C3[Traefik Ingress + NestJS APIs + Redis Cache]
-        VPS3 -.->|Offload Media| R2_3[Cloudflare R2 / AWS S3]
-        VPS3 -.->|Managed SQL| RDS[AWS RDS Postgres / Supabase]
-        VPS3 -.->|Managed NoSQL| Atlas[MongoDB Atlas M10/M20]
+    subgraph P3 ["Phase 3: DB Segregation (50,000 - 200,000+ MAU)"]
+        VPS3["VPS Orchestration Node (8GB RAM)"]
+        VPS3 -->|"Runs App Tier"| C3["Traefik Ingress + NestJS APIs + Redis Cache"]
+        VPS3 -.->|"Offload Media"| R2_3["Cloudflare R2 / AWS S3"]
+        VPS3 -.->|"Managed SQL"| RDS["AWS RDS Postgres / Supabase"]
+        VPS3 -.->|"Managed NoSQL"| Atlas["MongoDB Atlas M10/M20"]
     end
 
-    Phase 1 -->|Storage > 30GB or CCU > 50| Phase 2
-    Phase 2 -->|RAM > 85% or DB IOPS Latency > 20ms| Phase 3
+    P1 -->|"Storage > 30GB or CCU > 50"| P2
+    P2 -->|"RAM > 85% or DB IOPS Latency > 20ms"| P3
 ```
 
 ---
