@@ -6,7 +6,7 @@ Este diretório contém os projetos e microserviços que serão executados na in
 
 ## 1. ⚙️ `api-nestjs/`
 * **Descrição:** API Backend principal do sistema.
-* **Tecnologia:** NestJS + TypeScript.
+* **Tecnologia:** NestJS + TypeScript + Docker (`Dockerfile`).
 * **Responsabilidade:** Regras de negócio principais, autenticação, conexão com MongoDB, Redis, RabbitMQ e Postvector.
 * **Porta Interna:** `3000`
 
@@ -22,7 +22,7 @@ Este diretório contém os projetos e microserviços que serão executados na in
 
 ## 3. 🌐 `web-vite/`
 * **Descrição:** Aplicação Frontend Web & PWA.
-* **Tecnologia:** React + Vite + TypeScript.
+* **Tecnologia:** React + Vite + TypeScript + Docker (`Dockerfile` + NGINX).
 * **Responsabilidade:** Interface do usuário desenvolvida com abordagem **Mobile-First** e suporte **Offline-First** (com Service Workers e sincronização automática ao reestabelecer conexão).
 * **Porta Interna:** `80` / `5173`
 

@@ -22,6 +22,7 @@ apps/
 
 1. **`api-nestjs/`**:
    - Built on **NestJS & TypeScript**.
+   - Containerized with standalone multi-stage `Dockerfile`.
    - Connected to MongoDB, Redis, RabbitMQ, and Postvector (PGVector).
 
 2. **`api-nestjs-payment-service/`**:
@@ -30,6 +31,7 @@ apps/
 
 3. **`web-vite/`**:
    - Frontend built with **React + Vite + TypeScript**.
+   - Containerized with multi-stage NGINX `Dockerfile`.
    - Built with a **Mobile-First** UI and **Offline-First** architecture (Service Worker & background sync).
 
 4. **`qa-test-automation-pipeline/`**:

@@ -35,6 +35,11 @@ Um boilerplate open-source pronto para produção projetado para acelerar drasti
      npm run deploy:infra
      ```
      *Aplica regras de firewall UFW e Fail2ban, inicializa o Docker Swarm e emite certificados SSL automáticos do Let's Encrypt via Traefik.*
+   * **Backup de Volumes de Banco de Dados:**
+      ```bash
+      npm run backup:volumes
+      ```
+      *Realiza backup compactado automático do MongoDB, PostgreSQL e Redis com retenção de 7 dias.*
 
 ---
 

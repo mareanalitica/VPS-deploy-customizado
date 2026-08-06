@@ -29,12 +29,17 @@ An open-source, production-ready boilerplate designed to dramatically accelerate
      ```
      *Spins up all services with exposed ports on `localhost` via Docker Compose for easy debugging.*
    * **Production (VPS Hardened):**
-     ```bash
-     sudo ./setup/security/harden-vps.sh
-     ./setup/init.sh
-     npm run deploy:infra
-     ```
-     *Applies UFW/Fail2ban security rules, initializes Docker Swarm, and issues automatic Let's Encrypt SSL certificates via Traefik.*
+      ```bash
+      sudo ./setup/security/harden-vps.sh
+      ./setup/init.sh
+      npm run deploy:infra
+      ```
+      *Applies UFW/Fail2ban security rules, initializes Docker Swarm, and issues automatic Let's Encrypt SSL certificates via Traefik.*
+   * **Database Volumes Backup:**
+      ```bash
+      npm run backup:volumes
+      ```
+      *Performs automated compressed backups for MongoDB, PostgreSQL, and Redis with a 7-day retention policy.*
 
 ---
 

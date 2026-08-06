@@ -12,16 +12,18 @@ Portainer CE does not support building Docker images directly from Git repositor
 
 ---
 
+## 🔑 Automated Jenkins Admin Setup (`init-admin.groovy`)
+
+Jenkins initialization is automated via `setup/jenkins/init-admin.groovy`. Upon container startup:
+1. Reads `JENKINS_ADMIN_ID` (default: `admin`) and `JENKINS_ADMIN_PASSWORD`.
+2. Configures `HudsonPrivateSecurityRealm` and sets `FullControlOnceLoggedInAuthorizationStrategy`.
+3. Skips re-configuration safely if security is already configured.
+
+---
+
 ## 🔑 Dynamic `.env` Generation & Injection
 
-Each client project maintains its environment configuration template in:
-
-```text
-setup/env/apps/
-├── api-nestjs.env
-├── api-nestjs-payment-service.env
-└── web-vite.env
-```
+Each client project maintains its environment configuration template in `setup/docker/` and application `.env` files.
 
 During the build pipeline execution, Jenkins runs:
 
@@ -49,3 +51,4 @@ post {
 ```
 
 This guarantees intermediate build layers are automatically destroyed without impacting running containers.
+
