@@ -31,3 +31,5 @@ Welcome to the **VPS Deploy & Base MVP Stack** documentation hub.
 
 ### 5. 🧠 Architecture Decision Records (`docs/adr/`)
 * 📄 **[ADR 0001: Docker Swarm over Kubernetes](./adr/0001-why-docker-swarm-over-k8s.md)** — Architectural trade-offs on cost, complexity, and operational simplicity.
+* 📄 **[ADR 0002: Cloud CI/CD vs. VPS Orchestration Gateway](./adr/0002-cloud-ci-cd-vs-vps-orchestration-gateway.md)** — Developer Experience (DX), GitHub Actions costs, and positioning VPS strictly as an orchestration runtime.
+* 📄 **[ADR 0003: VPS Capacity Thresholds & Service Segregation](./adr/0003-vps-capacity-limits-and-managed-service-migration-thresholds.md)** — MAU, concurrent user metrics (CCU), and migration triggers for S3 & managed databases (RDS/Atlas).

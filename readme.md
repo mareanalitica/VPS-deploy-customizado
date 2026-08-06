@@ -76,6 +76,8 @@ Explore detailed documentation categorized by area and context:
 * 📶 **[PWA Offline-First Architecture](./docs/applications/pwa-offline-first.md)** — Offline caching strategies and background sync.
 * 🧪 **[QA Automation & Chromium](./docs/applications/qa-automation.md)** — Playwright E2E pipeline consuming headless Chromium.
 * 🧠 **[ADR 0001: Docker Swarm over Kubernetes](./docs/adr/0001-why-docker-swarm-over-k8s.md)** — Cost vs complexity trade-offs.
+* 🧠 **[ADR 0002: Cloud CI/CD vs. VPS Orchestration Gateway](./docs/adr/0002-cloud-ci-cd-vs-vps-orchestration-gateway.md)** — DX, GitHub Actions costs, and VPS as Orchestration Gateway.
+* 🧠 **[ADR 0003: VPS Capacity Limits & Managed Service Segregation](./docs/adr/0003-vps-capacity-limits-and-managed-service-migration-thresholds.md)** — MAU/CCU triggers for migrating to S3, RDS, and Atlas.
 
 ---
 

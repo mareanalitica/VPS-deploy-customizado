@@ -67,3 +67,5 @@ Acceda a la documentación detallada por áreas directamente en GitHub:
 * 📶 **[Arquitectura PWA Offline-First](./docs/applications/pwa-offline-first.md)** — Caché offline y sincronización en segundo plano.
 * 🧪 **[Automatización de QA y Chromium](./docs/applications/qa-automation.md)** — Suite de pruebas E2E con Playwright.
 * 🧠 **[ADR 0001: Docker Swarm vs Kubernetes](./docs/adr/0001-why-docker-swarm-over-k8s.md)** — Análisis de costes vs complejidad operacional.
+* 🧠 **[ADR 0002: CI/CD en la Nube vs VPS como Gateway de Orquestación](./docs/adr/0002-cloud-ci-cd-vs-vps-orchestration-gateway.md)** — DX, costes de GitHub Actions y VPS enfocada como runtime de orquestación.
+* 🧠 **[ADR 0003: Límites de la VPS y Segregación de Servicios Gestionados](./docs/adr/0003-vps-capacity-limits-and-managed-service-migration-thresholds.md)** — Métricas de MAU/CCU y detonantes para migración gradual a S3, RDS y Atlas.
